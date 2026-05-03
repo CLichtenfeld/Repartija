@@ -50,6 +50,7 @@ import com.example.repartija.ui.auth.AuthViewModel
 import com.example.repartija.ui.auth.LoginScreen
 import com.example.repartija.ui.auth.RegisterScreen
 import com.example.repartija.ui.theme.RepartijaTheme
+import com.example.repartija.util.UpdateManager
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -64,8 +65,24 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        val updateManager = UpdateManager(applicationContext)
         setContent {
             val viewModel: DebtViewModel = hiltViewModel()
+
+            LaunchedEffect(Unit) {
+                updateManager.checkForUpdates()
+            }
+
+            val updateInfo by updateManager.updateAvailable.collectAsState()
+            val downloadProgress by updateManager.downloadProgress.collectAsState()
+
+            if (updateInfo != null) {
+                UpdateDialog(
+                    version = updateInfo!!.version,
+                    progress = downloadProgress,
+                    onUpdate = { updateManager.downloadAndInstall(updateInfo!!) }
+                )
+            }
 
             // Handle intent on initial launch
             LaunchedEffect(Unit) {
@@ -328,6 +345,7 @@ fun GroupCard(
 fun MainAppScaffold(viewModel: DebtViewModel) {
     var currentTab by remember { mutableIntStateOf(0) }
     var showExpenseDialog by remember { mutableStateOf(false) }
+    var detailUserId by remember { mutableStateOf<String?>(null) }
 
     val membersRes by viewModel.currentMembers.collectAsState()
     val groupsRes by viewModel.allGroups.collectAsState()
@@ -412,7 +430,7 @@ fun MainAppScaffold(viewModel: DebtViewModel) {
     ) { innerPadding ->
         Box(modifier = Modifier.padding(innerPadding)) {
             when (currentTab) {
-                0 -> BalancesScreen(viewModel)
+                0 -> BalancesScreen(viewModel, onMemberClick = { detailUserId = it })
                 1 -> HistoryScreen(viewModel)
                 2 -> MembersScreen(viewModel)
             }
@@ -428,11 +446,23 @@ fun MainAppScaffold(viewModel: DebtViewModel) {
                 }
             )
         }
+        
+        detailUserId?.let { userId ->
+            val memberProfile = members.find { it.id == userId }
+            if (memberProfile != null) {
+                com.example.repartija.ui.MemberDetailScreen(
+                    groupId = selectedGroupId ?: "",
+                    currentUserId = currentUserId ?: "",
+                    member = memberProfile,
+                    onBack = { detailUserId = null }
+                )
+            }
+        }
     }
 }
 
 @Composable
-fun BalancesScreen(viewModel: DebtViewModel) {
+fun BalancesScreen(viewModel: DebtViewModel, onMemberClick: (String) -> Unit) {
     val debts by viewModel.currentDebts.collectAsState()
     val membersRes by viewModel.currentMembers.collectAsState()
     val currentUserId by viewModel.currentUserId.collectAsState()
@@ -461,7 +491,10 @@ fun BalancesScreen(viewModel: DebtViewModel) {
             val netBalance = owesMe - iOwe
 
             Card(
-                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp)
+                    .clickable { onMemberClick(member.id) },
                 elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
             ) {
                 Box(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
@@ -1040,5 +1073,40 @@ private fun shareInviteLink(context: android.content.Context, url: String) {
     }
     val shareIntent = Intent.createChooser(sendIntent, "Invitar al grupo")
     context.startActivity(shareIntent)
+}
+
+@Composable
+fun UpdateDialog(version: String, progress: Float?, onUpdate: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = { /* Non-dismissable */ },
+        title = { Text("Nueva versión disponible") },
+        text = {
+            Column {
+                Text("Versión $version está lista para descargar.")
+                Spacer(modifier = Modifier.height(16.dp))
+                if (progress != null) {
+                    Text("Descargando...", style = MaterialTheme.typography.labelSmall)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    LinearProgressIndicator(
+                        progress = { progress },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onUpdate,
+                enabled = progress == null
+            ) {
+                Text(if (progress == null) "Actualizar" else "Descargando...")
+            }
+        },
+        dismissButton = {},
+        properties = androidx.compose.ui.window.DialogProperties(
+            dismissOnBackPress = false,
+            dismissOnClickOutside = false
+        )
+    )
 }
 
