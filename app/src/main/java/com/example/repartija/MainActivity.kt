@@ -4,6 +4,14 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -21,6 +29,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -182,6 +191,7 @@ fun MainAppScaffold(viewModel: DebtViewModel) {
     val groupsRes by viewModel.allGroups.collectAsState()
     val selectedGroupId by viewModel.selectedGroupId.collectAsState()
     val currentUserId by viewModel.currentUserId.collectAsState()
+    val isSyncing by viewModel.isSyncing.collectAsState()
 
     val groups = (groupsRes as? DataResult.Success)?.data ?: emptyList()
     val members = (membersRes as? DataResult.Success)?.data ?: emptyList()
@@ -191,27 +201,42 @@ fun MainAppScaffold(viewModel: DebtViewModel) {
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text(selectedGroup?.name ?: "Repartija", style = MaterialTheme.typography.titleMedium)
-                        if (currentUser != null) {
-                            Text("Tú: ${currentUser.displayName}", style = MaterialTheme.typography.labelSmall)
+            Column {
+                TopAppBar(
+                    title = {
+                        Column {
+                            Text(selectedGroup?.name ?: "Repartija", style = MaterialTheme.typography.titleMedium)
+                            if (currentUser != null) {
+                                Text("Tú: ${currentUser.displayName}", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = { viewModel.selectGroup(null) }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Atrás")
+                        }
+                    },
+                    actions = {
+                        SyncIndicator(isSyncing = isSyncing)
+                        val authViewModel: AuthViewModel = hiltViewModel()
+                        IconButton(onClick = { authViewModel.logout() }) {
+                            Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = "Cerrar sesión")
                         }
                     }
-                },
-                navigationIcon = {
-                    IconButton(onClick = { viewModel.selectGroup(null) }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Atrás")
-                    }
-                },
-                actions = {
-                    val authViewModel: AuthViewModel = hiltViewModel()
-                    IconButton(onClick = { authViewModel.logout() }) {
-                        Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = "Cerrar sesión")
-                    }
+                )
+                // Subtle progress bar below the top bar
+                AnimatedVisibility(
+                    visible = isSyncing,
+                    enter = fadeIn(animationSpec = tween(200)),
+                    exit = fadeOut(animationSpec = tween(400))
+                ) {
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth().height(2.dp),
+                        color = MaterialTheme.colorScheme.tertiary,
+                        trackColor = Color.Transparent
+                    )
                 }
-            )
+            }
         },
         bottomBar = {
             NavigationBar {
@@ -622,4 +647,34 @@ fun ExpenseDialog(
             TextButton(onClick = onDismiss) { Text("Cancelar") }
         }
     )
+}
+
+@Composable
+fun SyncIndicator(isSyncing: Boolean) {
+    AnimatedVisibility(
+        visible = isSyncing,
+        enter = fadeIn(animationSpec = tween(150)),
+        exit = fadeOut(animationSpec = tween(300))
+    ) {
+        val infiniteTransition = rememberInfiniteTransition(label = "sync_pulse")
+        val alpha by infiniteTransition.animateFloat(
+            initialValue = 0.3f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(600),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "sync_alpha"
+        )
+
+        Icon(
+            imageVector = Icons.Default.Sync,
+            contentDescription = "Sincronizando",
+            tint = MaterialTheme.colorScheme.tertiary,
+            modifier = Modifier
+                .padding(horizontal = 4.dp)
+                .size(20.dp)
+                .alpha(alpha)
+        )
+    }
 }

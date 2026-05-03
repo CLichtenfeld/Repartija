@@ -2,6 +2,7 @@ package com.example.repartija.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.repartija.AppConstants.Tables
 import com.example.repartija.data.model.*
 import com.example.repartija.data.repository.*
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -20,7 +21,8 @@ class DebtViewModel @Inject constructor(
     private val expenseSplitRepository: ExpenseSplitRepository,
     private val paymentRepository: PaymentRepository,
     private val balanceRepository: BalanceRepository,
-    private val sessionRepository: SessionRepository
+    private val sessionRepository: SessionRepository,
+    private val realtimeManager: RealtimeManager
 ) : ViewModel() {
 
     private val _selectedGroupId = MutableStateFlow<String?>(null)
@@ -31,6 +33,12 @@ class DebtViewModel @Inject constructor(
     val currentUserId: StateFlow<String?> = _currentUserId.asStateFlow()
 
     val allGroups: StateFlow<DataResult<List<Group>>> = groupRepository.groups
+
+    /** Realtime sync indicator */
+    val isSyncing: StateFlow<Boolean> = realtimeManager.isSyncing
+
+    /** Trigger to force re-fetch of expenses/payments/members inside a group */
+    private val _refreshTrigger = MutableStateFlow(0)
 
     init {
         // Track auth session → set userId → fetch groups
@@ -43,12 +51,53 @@ class DebtViewModel @Inject constructor(
                 }
             }
         }
+
+        // Subscribe/unsubscribe Realtime when group changes
+        viewModelScope.launch {
+            _selectedGroupId.collect { groupId ->
+                if (groupId != null) {
+                    realtimeManager.subscribeToGroup(groupId)
+                } else {
+                    realtimeManager.unsubscribe()
+                }
+            }
+        }
+
+        // Listen for Realtime table changes → re-fetch appropriate data
+        viewModelScope.launch {
+            realtimeManager.tableChanged.collect { table ->
+                val groupId = _selectedGroupId.value ?: return@collect
+                when (table) {
+                    Tables.EXPENSES, Tables.EXPENSE_SPLITS -> {
+                        _refreshTrigger.value++
+                    }
+                    Tables.PAYMENTS -> {
+                        _refreshTrigger.value++
+                    }
+                    Tables.GROUP_MEMBERS -> {
+                        _memberRefreshTrigger.value++
+                        // Also refresh the user's groups in case they were added to a new one
+                        _currentUserId.value?.let { groupRepository.fetchGroupsForUser(it) }
+                    }
+                }
+                realtimeManager.setSyncing(false)
+            }
+        }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        realtimeManager.unsubscribe()
     }
 
     // ── Members for the selected group ──────────────────────────────
 
+    private val _memberRefreshTrigger = MutableStateFlow(0)
+
     @OptIn(ExperimentalCoroutinesApi::class)
-    val currentMembers: StateFlow<DataResult<List<Profile>>> = _selectedGroupId
+    val currentMembers: StateFlow<DataResult<List<Profile>>> = combine(
+        _selectedGroupId, _memberRefreshTrigger
+    ) { id, _ -> id }
         .flatMapLatest { groupId ->
             if (groupId == null) return@flatMapLatest flowOf<DataResult<List<Profile>>>(DataResult.Success(emptyList()))
 
@@ -72,9 +121,6 @@ class DebtViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DataResult.Loading)
 
     // ── Expenses ────────────────────────────────────────────────────
-
-    /** Trigger to force re-fetch of expenses/payments inside a group */
-    private val _refreshTrigger = MutableStateFlow(0)
 
     @OptIn(ExperimentalCoroutinesApi::class)
     val currentExpenses: StateFlow<DataResult<List<Expense>>> = combine(
@@ -146,7 +192,7 @@ class DebtViewModel @Inject constructor(
             val res = groupRepository.createGroup(Group(name = name, createdBy = userId))
             if (res is DataResult.Success) {
                 groupMemberRepository.addMember(GroupMember(groupId = res.data.id, userId = userId))
-                groupRepository.fetchGroupsForUser(userId) // Refresh groups list
+                groupRepository.fetchGroupsForUser(userId)
             }
         }
     }
