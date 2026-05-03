@@ -6,6 +6,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.core.util.Consumer
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -20,7 +21,13 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.draw.paint
+import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.Image
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
@@ -39,6 +46,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
+import androidx.navigation.NavType
+import androidx.navigation.navArgument
 import com.example.repartija.data.model.Expense
 import com.example.repartija.data.model.Group
 import com.example.repartija.data.model.Payment
@@ -46,6 +58,7 @@ import com.example.repartija.data.model.Profile
 import com.example.repartija.data.repository.DataResult
 import com.example.repartija.data.repository.SessionRepository
 import com.example.repartija.ui.DebtViewModel
+import com.example.repartija.ui.MemberDetailScreen
 import com.example.repartija.ui.auth.AuthViewModel
 import com.example.repartija.ui.auth.LoginScreen
 import com.example.repartija.ui.auth.RegisterScreen
@@ -112,30 +125,94 @@ class MainActivity : ComponentActivity() {
 
             RepartijaTheme {
                 val currentUserInfo by sessionRepository.currentUser.collectAsState()
+                val navController = rememberNavController()
 
-                if (currentUserInfo == null) {
-                    var showRegister by remember { mutableStateOf(false) }
-                    val authViewModel: AuthViewModel = hiltViewModel()
-
-                    if (showRegister) {
-                        RegisterScreen(
-                            viewModel = authViewModel,
-                            onNavigateToLogin = { showRegister = false }
-                        )
+                // React to auth changes globally
+                LaunchedEffect(currentUserInfo) {
+                    if (currentUserInfo == null) {
+                        navController.navigate("login") {
+                            popUpTo(0)
+                        }
                     } else {
+                        // After login, go to groups
+                        navController.navigate("groups") {
+                            popUpTo("login") { inclusive = true }
+                        }
+                    }
+                }
+
+                NavHost(
+                    navController = navController,
+                    startDestination = if (currentUserInfo == null) "login" else "groups"
+                ) {
+                    composable("login") {
+                        val authViewModel: AuthViewModel = hiltViewModel()
                         LoginScreen(
                             viewModel = authViewModel,
-                            onNavigateToRegister = { showRegister = true }
+                            onNavigateToRegister = { navController.navigate("register") }
                         )
                     }
-                } else {
-                    val selectedGroupId by viewModel.selectedGroupId.collectAsState()
-                    val groupsRes by viewModel.allGroups.collectAsState()
+                    composable("register") {
+                        val authViewModel: AuthViewModel = hiltViewModel()
+                        RegisterScreen(
+                            viewModel = authViewModel,
+                            onNavigateToLogin = { navController.popBackStack() }
+                        )
+                    }
+                    composable("groups") {
+                        val groupsRes by viewModel.allGroups.collectAsState()
+                        GroupsScreen(
+                            viewModel = viewModel,
+                            groupsRes = groupsRes,
+                            onGroupClick = { groupId ->
+                                navController.navigate("group/$groupId")
+                            }
+                        )
+                    }
+                    composable(
+                        route = "group/{groupId}",
+                        arguments = listOf(navArgument("groupId") { type = NavType.StringType })
+                    ) { backStackEntry ->
+                        val groupId = backStackEntry.arguments?.getString("groupId") ?: return@composable
+                        
+                        // Sync current selection in VM for shared data
+                        LaunchedEffect(groupId) {
+                            viewModel.selectGroup(groupId)
+                        }
 
-                    if (selectedGroupId == null) {
-                        GroupsScreen(viewModel, groupsRes)
-                    } else {
-                        MainAppScaffold(viewModel)
+                        MainAppScaffold(
+                            viewModel = viewModel,
+                            onBack = { 
+                                navController.popBackStack() 
+                            },
+                            onMemberClick = { memberId ->
+                                navController.navigate("member_detail/$groupId/$memberId")
+                            }
+                        )
+                    }
+                    composable(
+                        route = "member_detail/{groupId}/{memberId}",
+                        arguments = listOf(
+                            navArgument("groupId") { type = NavType.StringType },
+                            navArgument("memberId") { type = NavType.StringType }
+                        )
+                    ) { backStackEntry ->
+                        val groupId = backStackEntry.arguments?.getString("groupId") ?: return@composable
+                        val memberId = backStackEntry.arguments?.getString("memberId") ?: return@composable
+                        val currentUserId by viewModel.currentUserId.collectAsState()
+                        val membersRes by viewModel.currentMembers.collectAsState()
+                        
+                        val members = (membersRes as? DataResult.Success)?.data ?: emptyList()
+                        val member = members.find { it.id == memberId }
+
+                        if (member != null && currentUserId != null) {
+                            MemberDetailScreen(
+                                groupId = groupId,
+                                currentUserId = currentUserId!!,
+                                member = member,
+                                onBack = { navController.popBackStack() }
+                            )
+                        }
                     }
                 }
             }
@@ -145,7 +222,11 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun GroupsScreen(viewModel: DebtViewModel, groupsRes: DataResult<List<Group>>) {
+fun GroupsScreen(
+    viewModel: DebtViewModel,
+    groupsRes: DataResult<List<Group>>,
+    onGroupClick: (String) -> Unit
+) {
     var showAddGroupDialog by remember { mutableStateOf(false) }
     var editingGroup by remember { mutableStateOf<Group?>(null) }
     var deletingGroup by remember { mutableStateOf<Group?>(null) }
@@ -154,15 +235,48 @@ fun GroupsScreen(viewModel: DebtViewModel, groupsRes: DataResult<List<Group>>) {
 
     Scaffold(
         topBar = {
-            CenterAlignedTopAppBar(title = { Text("Mis Grupos") })
+            CenterAlignedTopAppBar(
+                title = {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = "REPARTIJA",
+                            style = MaterialTheme.typography.titleLarge.copy(
+                                fontWeight = FontWeight.ExtraBold,
+                                letterSpacing = 2.sp
+                            )
+                        )
+                        Text(
+                            text = "Cuentas claras, mates compartidos",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                        )
+                    }
+                },
+                actions = {
+                    val authViewModel: AuthViewModel = hiltViewModel()
+                    IconButton(onClick = { authViewModel.logout() }) {
+                        Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = "Cerrar sesión")
+                    }
+                }
+            )
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = { showAddGroupDialog = true }) {
+            FloatingActionButton(
+                onClick = { showAddGroupDialog = true },
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = Color.White,
+                shape = CircleShape
+            ) {
                 Icon(Icons.Default.Add, contentDescription = "Nuevo Grupo")
             }
         }
     ) { padding ->
-        Column(modifier = Modifier.padding(padding).fillMaxSize().padding(16.dp)) {
+        Box(modifier = Modifier.fillMaxSize().paint(
+            painterResource(id = R.drawable.bg_pattern),
+            contentScale = ContentScale.Crop,
+            alpha = 0.15f
+        )) {
+            Column(modifier = Modifier.padding(padding).fillMaxSize().padding(16.dp)) {
             when (groupsRes) {
                 is DataResult.Loading -> {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -185,7 +299,7 @@ fun GroupsScreen(viewModel: DebtViewModel, groupsRes: DataResult<List<Group>>) {
                             items(groups) { group ->
                                 GroupCard(
                                     group = group,
-                                    onClick = { viewModel.selectGroup(group.id) },
+                                    onClick = { onGroupClick(group.id) },
                                     onEdit = { editingGroup = group },
                                     onDelete = {
                                         scope.launch {
@@ -203,6 +317,7 @@ fun GroupsScreen(viewModel: DebtViewModel, groupsRes: DataResult<List<Group>>) {
                     }
                 }
             }
+        }
         }
 
         // ── Add group dialog ─────────────────────────────────────────
@@ -309,13 +424,19 @@ fun GroupCard(
             .fillMaxWidth()
             .padding(vertical = 8.dp)
             .clickable(onClick = onClick),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(start = 16.dp, top = 16.dp, bottom = 16.dp, end = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(Icons.Default.Groups, contentDescription = null)
+            Image(
+                painter = painterResource(id = R.drawable.group_avatar),
+                contentDescription = null,
+                modifier = Modifier.size(48.dp).clip(CircleShape)
+            )
             Spacer(modifier = Modifier.width(16.dp))
             Text(group.name, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
 
@@ -342,10 +463,13 @@ fun GroupCard(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MainAppScaffold(viewModel: DebtViewModel) {
+fun MainAppScaffold(
+    viewModel: DebtViewModel,
+    onBack: () -> Unit,
+    onMemberClick: (String) -> Unit
+) {
     var currentTab by remember { mutableIntStateOf(0) }
     var showExpenseDialog by remember { mutableStateOf(false) }
-    var detailUserId by remember { mutableStateOf<String?>(null) }
 
     val membersRes by viewModel.currentMembers.collectAsState()
     val groupsRes by viewModel.allGroups.collectAsState()
@@ -365,14 +489,20 @@ fun MainAppScaffold(viewModel: DebtViewModel) {
                 TopAppBar(
                     title = {
                         Column {
-                            Text(selectedGroup?.name ?: "Repartija", style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                text = selectedGroup?.name?.uppercase() ?: "REPARTIJA",
+                                style = MaterialTheme.typography.titleLarge.copy(
+                                    fontWeight = FontWeight.ExtraBold,
+                                    letterSpacing = 1.sp
+                                )
+                            )
                             if (currentUser != null) {
-                                Text("Tú: ${currentUser.displayName}", style = MaterialTheme.typography.labelSmall)
+                                Text("Cuentas claras, mates compartidos", style = MaterialTheme.typography.labelSmall)
                             }
                         }
                     },
                     navigationIcon = {
-                        IconButton(onClick = { viewModel.selectGroup(null) }) {
+                        IconButton(onClick = onBack) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Atrás")
                         }
                     },
@@ -399,38 +529,75 @@ fun MainAppScaffold(viewModel: DebtViewModel) {
             }
         },
         bottomBar = {
-            NavigationBar {
+            NavigationBar(
+                containerColor = MaterialTheme.colorScheme.surface
+            ) {
                 NavigationBarItem(
                     selected = currentTab == 0,
                     onClick = { currentTab = 0 },
-                    icon = { Icon(Icons.Default.AccountBalance, null) },
+                    icon = {
+                        Image(
+                            painter = painterResource(id = R.drawable.nav_saldos),
+                            contentDescription = "Saldos",
+                            modifier = Modifier.size(28.dp),
+                            alpha = if (currentTab == 0) 1f else 0.5f
+                        )
+                    },
                     label = { Text("Saldos") }
                 )
                 NavigationBarItem(
                     selected = currentTab == 1,
                     onClick = { currentTab = 1 },
-                    icon = { Icon(Icons.AutoMirrored.Filled.List, null) },
+                    icon = {
+                        Image(
+                            painter = painterResource(id = R.drawable.nav_historial),
+                            contentDescription = "Historial",
+                            modifier = Modifier.size(28.dp),
+                            alpha = if (currentTab == 1) 1f else 0.5f
+                        )
+                    },
                     label = { Text("Historial") }
                 )
                 NavigationBarItem(
                     selected = currentTab == 2,
                     onClick = { currentTab = 2 },
-                    icon = { Icon(Icons.Default.Person, null) },
+                    icon = {
+                        Image(
+                            painter = painterResource(id = R.drawable.nav_miembros),
+                            contentDescription = "Miembros",
+                            modifier = Modifier.size(28.dp),
+                            alpha = if (currentTab == 2) 1f else 0.5f
+                        )
+                    },
                     label = { Text("Miembros") }
                 )
             }
         },
         floatingActionButton = {
             if (currentTab == 0) {
-                FloatingActionButton(onClick = { showExpenseDialog = true }) {
+                FloatingActionButton(
+                    onClick = { showExpenseDialog = true },
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = Color.White,
+                    shape = CircleShape
+                ) {
                     Icon(Icons.Default.Add, contentDescription = "Nuevo Gasto")
                 }
             }
         }
     ) { innerPadding ->
-        Box(modifier = Modifier.padding(innerPadding)) {
+        Box(
+            modifier = Modifier
+                .padding(innerPadding)
+                .fillMaxSize()
+                .paint(
+                    painterResource(id = R.drawable.bg_pattern),
+                    contentScale = ContentScale.Crop,
+                    alpha = 0.15f
+                )
+        ) {
             when (currentTab) {
-                0 -> BalancesScreen(viewModel, onMemberClick = { detailUserId = it })
+                0 -> BalancesScreen(viewModel, onMemberClick = onMemberClick)
                 1 -> HistoryScreen(viewModel)
                 2 -> MembersScreen(viewModel)
             }
@@ -445,18 +612,6 @@ fun MainAppScaffold(viewModel: DebtViewModel) {
                     showExpenseDialog = false
                 }
             )
-        }
-        
-        detailUserId?.let { userId ->
-            val memberProfile = members.find { it.id == userId }
-            if (memberProfile != null) {
-                com.example.repartija.ui.MemberDetailScreen(
-                    groupId = selectedGroupId ?: "",
-                    currentUserId = currentUserId ?: "",
-                    member = memberProfile,
-                    onBack = { detailUserId = null }
-                )
-            }
         }
     }
 }
@@ -495,13 +650,21 @@ fun BalancesScreen(viewModel: DebtViewModel, onMemberClick: (String) -> Unit) {
                     .fillMaxWidth()
                     .padding(vertical = 8.dp)
                     .clickable { onMemberClick(member.id) },
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
             ) {
-                Box(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
-                    Column {
+                Row(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Image(
+                        painter = painterResource(id = R.drawable.member_avatar),
+                        contentDescription = null,
+                        modifier = Modifier.size(56.dp).clip(CircleShape)
+                    )
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(member.displayName, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
 
-                        val balanceColor = if (netBalance > 0.01) Color(0xFF388E3C)
+                        val balanceColor = if (netBalance > 0.01) MaterialTheme.colorScheme.primary
                                        else if (netBalance < -0.01) MaterialTheme.colorScheme.error
                                        else Color.Gray
                         val balanceLabel = if (netBalance > 0.01) "Te debe"
@@ -602,7 +765,7 @@ fun HistoryScreen(viewModel: DebtViewModel) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text("Historial", style = MaterialTheme.typography.headlineMedium)
-            val balanceColor = if (globalBalance > 0.01) Color(0xFF388E3C) else if (globalBalance < -0.01) MaterialTheme.colorScheme.error else Color.Gray
+            val balanceColor = if (globalBalance > 0.01) MaterialTheme.colorScheme.primary else if (globalBalance < -0.01) MaterialTheme.colorScheme.error else Color.Gray
             Column(horizontalAlignment = Alignment.End) {
                 Text("Balance Global", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
                 Text(
@@ -624,7 +787,11 @@ fun HistoryScreen(viewModel: DebtViewModel) {
 
         LazyColumn {
             items(movements) { move ->
-                Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                ) {
                     Box(modifier = Modifier.padding(16.dp)) {
                         Column {
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -633,7 +800,7 @@ fun HistoryScreen(viewModel: DebtViewModel) {
                                     is Movement.Pay -> Icons.Default.CheckCircle
                                 }
                                 val color = when (move) {
-                                    is Movement.Exp -> if (move.expense.paidBy == currentUserId) Color(0xFF388E3C) else Color.Gray
+                                    is Movement.Exp -> if (move.expense.paidBy == currentUserId) MaterialTheme.colorScheme.primary else Color.Gray
                                     is Movement.Pay -> MaterialTheme.colorScheme.primary
                                 }
 
@@ -745,13 +912,11 @@ fun MembersScreen(viewModel: DebtViewModel) {
                             },
                             supportingContent = { Text(member.email, style = MaterialTheme.typography.bodySmall) },
                             leadingContent = {
-                                Box(
-                                    modifier = Modifier.size(40.dp).clip(CircleShape)
-                                        .background(MaterialTheme.colorScheme.primaryContainer),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(member.displayName.take(1).uppercase(), color = MaterialTheme.colorScheme.onPrimaryContainer)
-                                }
+                                Image(
+                                    painter = painterResource(id = R.drawable.member_avatar),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(48.dp).clip(CircleShape)
+                                )
                             },
                             trailingContent = {
                                 if (!isCurrentUser) {

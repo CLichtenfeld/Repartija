@@ -19,8 +19,14 @@ object SupabaseModule {
     @Provides
     @Singleton
     fun provideSupabaseClient(): SupabaseClient {
+        // Sanitizamos la URL para eliminar el sufijo /rest/v1 si existe
+        val sanitizedUrl = BuildConfig.SUPABASE_URL
+            .removeSuffix("/rest/v1")
+            .removeSuffix("/rest/v1/")
+            .removeSuffix("/")
+
         return createSupabaseClient(
-            supabaseUrl = BuildConfig.SUPABASE_URL,
+            supabaseUrl = sanitizedUrl,
             supabaseKey = BuildConfig.SUPABASE_KEY
         ) {
             install(Auth)

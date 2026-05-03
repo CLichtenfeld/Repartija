@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
@@ -13,15 +14,19 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.paint
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.example.repartija.R
 import com.example.repartija.data.model.Profile
 import com.example.repartija.data.repository.MemberDetailState
 import com.example.repartija.data.repository.TransactionType
@@ -72,7 +77,14 @@ fun MemberDetailScreen(
                     isRefreshing = true
                     viewModel.loadDetails(groupId, currentUserId, member.id)
                 },
-                modifier = Modifier.fillMaxSize().padding(padding)
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .paint(
+                        painterResource(id = R.drawable.bg_pattern),
+                        contentScale = ContentScale.Crop,
+                        alpha = 0.15f
+                    )
             ) {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize().padding(16.dp)
@@ -84,7 +96,7 @@ fun MemberDetailScreen(
                             style = MaterialTheme.typography.titleMedium,
                             color = Color.Gray
                         )
-                        val balanceColor = if (state.currentBalance > 0.01) Color(0xFF388E3C)
+                        val balanceColor = if (state.currentBalance > 0.01) MaterialTheme.colorScheme.primary
                         else if (state.currentBalance < -0.01) MaterialTheme.colorScheme.error
                         else Color.Gray
                         
@@ -136,7 +148,8 @@ fun MemberDetailScreen(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(vertical = 4.dp),
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                                shape = RoundedCornerShape(16.dp),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
                             ) {
                                 Row(
                                     modifier = Modifier
@@ -145,7 +158,7 @@ fun MemberDetailScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     val icon = if (tx.type == TransactionType.EXPENSE) Icons.Default.ReceiptLong else Icons.Default.CheckCircle
-                                    val color = if (tx.effectOnBalance > 0) Color(0xFF388E3C) else MaterialTheme.colorScheme.error
+                                    val color = if (tx.effectOnBalance > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
 
                                     Icon(icon, null, tint = color, modifier = Modifier.size(28.dp))
                                     Spacer(Modifier.width(12.dp))
@@ -175,7 +188,7 @@ fun MemberDetailScreen(
 fun CanvasDebtChart(state: MemberDetailState, modifier: Modifier) {
     if (state.dailyBalances.isEmpty()) return
 
-    val positiveColor = Color(0xFF388E3C)
+    val positiveColor = MaterialTheme.colorScheme.primary
     val negativeColor = MaterialTheme.colorScheme.error
     val zeroColor = Color.Gray.copy(alpha = 0.5f)
 

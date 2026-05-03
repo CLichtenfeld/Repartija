@@ -1,5 +1,6 @@
 package com.example.repartija.data.repository
 
+import android.util.Log
 import com.example.repartija.AppConstants.Tables
 import com.example.repartija.data.model.Profile
 import io.github.jan.supabase.SupabaseClient
@@ -22,9 +23,14 @@ class ProfileRepository @Inject constructor(
         return try {
             val result = supabaseClient.postgrest[Tables.PROFILES]
                 .select().decodeList<Profile>()
+            Log.d("ProfileRepository", "Fetched ${result.size} profiles")
+            result.forEach { 
+                Log.v("ProfileRepository", "Profile: id=${it.id}, email=${it.email}, name=${it.displayName}")
+            }
             _profiles.value = DataResult.Success(result)
             DataResult.Success(result)
         } catch (e: Exception) {
+            Log.e("ProfileRepository", "Error fetching profiles", e)
             val error = DataResult.Error(e.message ?: "Unknown Error", e)
             _profiles.value = error
             error
@@ -43,13 +49,28 @@ class ProfileRepository @Inject constructor(
     }
 
     suspend fun searchByEmail(email: String): DataResult<Profile> {
+        Log.d("ProfileRepository", "Searching for profile with email: $email")
         return try {
             val result = supabaseClient.postgrest[Tables.PROFILES]
-                .select { filter { eq("email", email) } }
-                .decodeSingle<Profile>()
-            DataResult.Success(result)
+                .select {
+                    filter {
+                        ilike("email", email)
+                    }
+                }
+                .decodeList<Profile>()
+            
+            Log.d("ProfileRepository", "Search result for $email: ${result.size} matches")
+            if (result.isNotEmpty()) {
+                val profile = result.first()
+                Log.d("ProfileRepository", "Found profile: ${profile.id} - ${profile.displayName}")
+                DataResult.Success(profile)
+            } else {
+                Log.w("ProfileRepository", "No profile found for email: $email")
+                DataResult.Error("No se encontró un usuario con ese email")
+            }
         } catch (e: Exception) {
-            DataResult.Error("No se encontró un usuario con ese email", e)
+            Log.e("ProfileRepository", "Error searching for email $email", e)
+            DataResult.Error("Error al buscar usuario: ${e.message}", e)
         }
     }
 }

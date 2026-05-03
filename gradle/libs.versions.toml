@@ -14,6 +14,7 @@ supabase = "3.0.1"
 ktor = "3.0.0"
 hilt = "2.52"
 hiltNavigationCompose = "1.2.0"
+navigationCompose = "2.8.3"
 kotlinxSerializationJson = "1.7.3"
 vico = "1.15.0"
 
@@ -45,6 +46,7 @@ ktor-client-android = { group = "io.ktor", name = "ktor-client-android", version
 hilt-android = { group = "com.google.dagger", name = "hilt-android", version.ref = "hilt" }
 hilt-compiler = { group = "com.google.dagger", name = "hilt-android-compiler", version.ref = "hilt" }
 androidx-hilt-navigation-compose = { group = "androidx.hilt", name = "hilt-navigation-compose", version.ref = "hiltNavigationCompose" }
+androidx-navigation-compose = { group = "androidx.navigation", name = "navigation-compose", version.ref = "navigationCompose" }
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinxSerializationJson" }
 vico-compose = { group = "com.patrykandpatrick.vico", name = "compose", version.ref = "vico" }
 vico-compose-m3 = { group = "com.patrykandpatrick.vico", name = "compose-m3", version.ref = "vico" }

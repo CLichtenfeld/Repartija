@@ -13,7 +13,8 @@ import javax.inject.Singleton
 
 @Singleton
 class GroupRepository @Inject constructor(
-    private val supabaseClient: SupabaseClient
+    private val supabaseClient: SupabaseClient,
+    private val sessionRepository: SessionRepository
 ) {
     private val _groups = MutableStateFlow<DataResult<List<Group>>>(DataResult.Loading)
     val groups: StateFlow<DataResult<List<Group>>> = _groups.asStateFlow()
@@ -48,7 +49,11 @@ class GroupRepository @Inject constructor(
 
     suspend fun createGroup(group: Group): DataResult<Group> {
         return try {
-            val result = supabaseClient.postgrest[Tables.GROUPS].insert(group) {
+            val userId = sessionRepository.currentUser.value?.id 
+                ?: throw Exception("User not logged in")
+            val groupToInsert = group.copy(createdBy = userId)
+            
+            val result = supabaseClient.postgrest[Tables.GROUPS].insert(groupToInsert) {
                 select()
             }.decodeSingle<Group>()
             DataResult.Success(result)

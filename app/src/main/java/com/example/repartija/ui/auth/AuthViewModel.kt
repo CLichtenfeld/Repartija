@@ -11,6 +11,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import javax.inject.Inject
 
 sealed interface AuthState {
@@ -56,6 +58,9 @@ class AuthViewModel @Inject constructor(
                 supabaseClient.auth.signUpWith(Email) {
                     this.email = email
                     this.password = password
+                    data = buildJsonObject {
+                        put("display_name", displayName)
+                    }
                 }
             }
             _authState.value = when (result) {
