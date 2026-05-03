@@ -41,4 +41,15 @@ class ProfileRepository @Inject constructor(
             DataResult.Error(e.message ?: "Unknown Error", e)
         }
     }
+
+    suspend fun searchByEmail(email: String): DataResult<Profile> {
+        return try {
+            val result = supabaseClient.postgrest[Tables.PROFILES]
+                .select { filter { eq("email", email) } }
+                .decodeSingle<Profile>()
+            DataResult.Success(result)
+        } catch (e: Exception) {
+            DataResult.Error("No se encontró un usuario con ese email", e)
+        }
+    }
 }

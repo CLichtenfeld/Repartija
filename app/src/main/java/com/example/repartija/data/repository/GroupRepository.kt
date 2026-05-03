@@ -24,7 +24,6 @@ class GroupRepository @Inject constructor(
     suspend fun fetchGroupsForUser(userId: String): DataResult<List<Group>> {
         _groups.value = DataResult.Loading
         return try {
-            // First get the group_ids this user belongs to
             val memberships = supabaseClient.postgrest[Tables.GROUP_MEMBERS]
                 .select { filter { eq("user_id", userId) } }
                 .decodeList<GroupMember>()
@@ -53,6 +52,35 @@ class GroupRepository @Inject constructor(
                 select()
             }.decodeSingle<Group>()
             DataResult.Success(result)
+        } catch (e: Exception) {
+            DataResult.Error(e.message ?: "Unknown Error", e)
+        }
+    }
+
+    suspend fun updateGroup(groupId: String, newName: String): DataResult<Group> {
+        return try {
+            val result = supabaseClient.postgrest[Tables.GROUPS].update({
+                set("name", newName)
+            }) {
+                select()
+                filter { eq("id", groupId) }
+            }.decodeSingle<Group>()
+            DataResult.Success(result)
+        } catch (e: Exception) {
+            DataResult.Error(e.message ?: "Unknown Error", e)
+        }
+    }
+
+    suspend fun deleteGroup(groupId: String): DataResult<Unit> {
+        return try {
+            // Delete all related data first
+            supabaseClient.postgrest[Tables.GROUP_MEMBERS].delete {
+                filter { eq("group_id", groupId) }
+            }
+            supabaseClient.postgrest[Tables.GROUPS].delete {
+                filter { eq("id", groupId) }
+            }
+            DataResult.Success(Unit)
         } catch (e: Exception) {
             DataResult.Error(e.message ?: "Unknown Error", e)
         }

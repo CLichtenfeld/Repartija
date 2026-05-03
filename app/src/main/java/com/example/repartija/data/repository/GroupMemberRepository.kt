@@ -43,4 +43,19 @@ class GroupMemberRepository @Inject constructor(
             DataResult.Error(e.message ?: "Unknown Error", e)
         }
     }
+
+    suspend fun removeMember(groupId: String, userId: String): DataResult<Unit> {
+        return try {
+            supabaseClient.postgrest[Tables.GROUP_MEMBERS].delete {
+                filter {
+                    eq("group_id", groupId)
+                    eq("user_id", userId)
+                }
+            }
+            fetchMembers(groupId)
+            DataResult.Success(Unit)
+        } catch (e: Exception) {
+            DataResult.Error(e.message ?: "Unknown Error", e)
+        }
+    }
 }

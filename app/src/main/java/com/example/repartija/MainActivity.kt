@@ -1,9 +1,11 @@
 package com.example.repartija
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.core.util.Consumer
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -32,6 +34,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -48,6 +51,7 @@ import com.example.repartija.ui.auth.LoginScreen
 import com.example.repartija.ui.auth.RegisterScreen
 import com.example.repartija.ui.theme.RepartijaTheme
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 import kotlin.math.abs
 
@@ -62,6 +66,32 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             val viewModel: DebtViewModel = hiltViewModel()
+
+            // Handle intent on initial launch
+            LaunchedEffect(Unit) {
+                val data = intent?.data
+                if (data?.host == "join") {
+                    val token = data.getQueryParameter("token")
+                    if (token != null) {
+                        viewModel.setPendingJoinToken(token)
+                    }
+                }
+            }
+
+            // Handle intents while app is already running
+            DisposableEffect(Unit) {
+                val listener = Consumer<Intent> { newIntent ->
+                    val data = newIntent.data
+                    if (data?.host == "join") {
+                        val token = data.getQueryParameter("token")
+                        if (token != null) {
+                            viewModel.setPendingJoinToken(token)
+                        }
+                    }
+                }
+                addOnNewIntentListener(listener)
+                onDispose { removeOnNewIntentListener(listener) }
+            }
 
             RepartijaTheme {
                 val currentUserInfo by sessionRepository.currentUser.collectAsState()
@@ -100,6 +130,10 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun GroupsScreen(viewModel: DebtViewModel, groupsRes: DataResult<List<Group>>) {
     var showAddGroupDialog by remember { mutableStateOf(false) }
+    var editingGroup by remember { mutableStateOf<Group?>(null) }
+    var deletingGroup by remember { mutableStateOf<Group?>(null) }
+    var deleteBlockedMessage by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
 
     Scaffold(
         topBar = {
@@ -132,22 +166,21 @@ fun GroupsScreen(viewModel: DebtViewModel, groupsRes: DataResult<List<Group>>) {
                     } else {
                         LazyColumn {
                             items(groups) { group ->
-                                Card(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 8.dp)
-                                        .clickable { viewModel.selectGroup(group.id) },
-                                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(16.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Icon(Icons.Default.Groups, contentDescription = null)
-                                        Spacer(modifier = Modifier.width(16.dp))
-                                        Text(group.name, style = MaterialTheme.typography.titleLarge)
+                                GroupCard(
+                                    group = group,
+                                    onClick = { viewModel.selectGroup(group.id) },
+                                    onEdit = { editingGroup = group },
+                                    onDelete = {
+                                        scope.launch {
+                                            val canDelete = viewModel.areAllBalancesZero(group.id)
+                                            if (canDelete) {
+                                                deletingGroup = group
+                                            } else {
+                                                deleteBlockedMessage = "No se puede eliminar \"${group.name}\": hay saldos pendientes."
+                                            }
+                                        }
                                     }
-                                }
+                                )
                             }
                         }
                     }
@@ -155,6 +188,7 @@ fun GroupsScreen(viewModel: DebtViewModel, groupsRes: DataResult<List<Group>>) {
             }
         }
 
+        // ── Add group dialog ─────────────────────────────────────────
         if (showAddGroupDialog) {
             var groupName by remember { mutableStateOf("") }
             AlertDialog(
@@ -177,6 +211,114 @@ fun GroupsScreen(viewModel: DebtViewModel, groupsRes: DataResult<List<Group>>) {
                     }) { Text("Crear") }
                 }
             )
+        }
+
+        // ── Rename dialog ────────────────────────────────────────────
+        editingGroup?.let { group ->
+            var newName by remember(group.id) { mutableStateOf(group.name) }
+            AlertDialog(
+                onDismissRequest = { editingGroup = null },
+                title = { Text("Renombrar Grupo") },
+                text = {
+                    OutlinedTextField(
+                        value = newName,
+                        onValueChange = { newName = it },
+                        label = { Text("Nuevo nombre") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                },
+                confirmButton = {
+                    Button(onClick = {
+                        if (newName.isNotBlank()) {
+                            viewModel.renameGroup(group.id, newName)
+                            editingGroup = null
+                        }
+                    }) { Text("Guardar") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { editingGroup = null }) { Text("Cancelar") }
+                }
+            )
+        }
+
+        // ── Delete confirmation dialog ───────────────────────────────
+        deletingGroup?.let { group ->
+            AlertDialog(
+                onDismissRequest = { deletingGroup = null },
+                icon = { Icon(Icons.Default.Warning, null, tint = MaterialTheme.colorScheme.error) },
+                title = { Text("Eliminar \"${group.name}\"?") },
+                text = { Text("Esta acción no se puede deshacer. Se eliminarán todos los datos del grupo.") },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            viewModel.deleteGroup(group.id)
+                            deletingGroup = null
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                    ) { Text("Eliminar") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { deletingGroup = null }) { Text("Cancelar") }
+                }
+            )
+        }
+
+        // ── Delete blocked snackbar ──────────────────────────────────
+        deleteBlockedMessage?.let { msg ->
+            AlertDialog(
+                onDismissRequest = { deleteBlockedMessage = null },
+                icon = { Icon(Icons.Default.Block, null, tint = MaterialTheme.colorScheme.error) },
+                title = { Text("No se puede eliminar") },
+                text = { Text(msg) },
+                confirmButton = {
+                    Button(onClick = { deleteBlockedMessage = null }) { Text("Entendido") }
+                }
+            )
+        }
+    }
+}
+
+@Composable
+fun GroupCard(
+    group: Group,
+    onClick: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit
+) {
+    var menuExpanded by remember { mutableStateOf(false) }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp)
+            .clickable(onClick = onClick),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, top = 16.dp, bottom = 16.dp, end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Default.Groups, contentDescription = null)
+            Spacer(modifier = Modifier.width(16.dp))
+            Text(group.name, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+
+            Box {
+                IconButton(onClick = { menuExpanded = true }) {
+                    Icon(Icons.Default.MoreVert, contentDescription = "Opciones")
+                }
+                DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                    DropdownMenuItem(
+                        text = { Text("Editar") },
+                        onClick = { menuExpanded = false; onEdit() },
+                        leadingIcon = { Icon(Icons.Default.Edit, null) }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Eliminar", color = MaterialTheme.colorScheme.error) },
+                        onClick = { menuExpanded = false; onDelete() },
+                        leadingIcon = { Icon(Icons.Default.Delete, null, tint = MaterialTheme.colorScheme.error) }
+                    )
+                }
+            }
         }
     }
 }
@@ -505,6 +647,16 @@ fun HistoryScreen(viewModel: DebtViewModel) {
 @Composable
 fun MembersScreen(viewModel: DebtViewModel) {
     val membersRes by viewModel.currentMembers.collectAsState()
+    val invitesRes by viewModel.currentInvites.collectAsState()
+    val currentUserId by viewModel.currentUserId.collectAsState()
+    val searchResult by viewModel.searchResult.collectAsState()
+    val debts by viewModel.currentDebts.collectAsState()
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    var showAddMemberDialog by remember { mutableStateOf(false) }
+    var removingMember by remember { mutableStateOf<Profile?>(null) }
+    var removeBlockedMessage by remember { mutableStateOf<String?>(null) }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Row(
@@ -513,23 +665,51 @@ fun MembersScreen(viewModel: DebtViewModel) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text("Integrantes", style = MaterialTheme.typography.headlineMedium)
-            Button(onClick = { /* TODO: Invite via deep link */ }) {
-                Icon(Icons.Default.PersonAdd, null)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Invitar")
+            Row {
+                IconButton(onClick = { showAddMemberDialog = true }) {
+                    Icon(Icons.Default.PersonSearch, null)
+                }
+                Button(onClick = {
+                    scope.launch {
+                        val url = viewModel.generateInviteLink()
+                        if (url != null) {
+                            shareInviteLink(context, url)
+                        }
+                    }
+                }) {
+                    Icon(Icons.Default.PersonAdd, null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Invitar")
+                }
             }
         }
 
         Spacer(modifier = Modifier.height(16.dp))
 
         when (membersRes) {
-            is DataResult.Loading -> CircularProgressIndicator()
+            is DataResult.Loading -> {
+                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+            }
             is DataResult.Error -> Text("Error cargando miembros", color = MaterialTheme.colorScheme.error)
             is DataResult.Success -> {
+                val members = (membersRes as DataResult.Success<List<Profile>>).data
                 LazyColumn {
-                    items((membersRes as DataResult.Success<List<Profile>>).data) { member ->
+                    items(members) { member ->
+                        val isCurrentUser = member.id == currentUserId
+                        val canRemove = !isCurrentUser && viewModel.memberHasZeroBalance(member.id)
+
                         ListItem(
-                            headlineContent = { Text(member.displayName) },
+                            headlineContent = {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(member.displayName, fontWeight = FontWeight.Medium)
+                                    if (isCurrentUser) {
+                                        Spacer(Modifier.width(8.dp))
+                                        Text("(tú)", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                                    }
+                                }
+                            },
                             supportingContent = { Text(member.email, style = MaterialTheme.typography.bodySmall) },
                             leadingContent = {
                                 Box(
@@ -537,16 +717,189 @@ fun MembersScreen(viewModel: DebtViewModel) {
                                         .background(MaterialTheme.colorScheme.primaryContainer),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    Text(member.displayName.take(1).uppercase())
+                                    Text(member.displayName.take(1).uppercase(), color = MaterialTheme.colorScheme.onPrimaryContainer)
+                                }
+                            },
+                            trailingContent = {
+                                if (!isCurrentUser) {
+                                    IconButton(onClick = {
+                                        if (canRemove) {
+                                            removingMember = member
+                                        } else {
+                                            removeBlockedMessage = "No se puede quitar a ${member.displayName}: tiene saldos pendientes."
+                                        }
+                                    }) {
+                                        Icon(
+                                            Icons.Default.PersonRemove,
+                                            contentDescription = "Quitar",
+                                            tint = if (canRemove) MaterialTheme.colorScheme.error else Color.Gray
+                                        )
+                                    }
                                 }
                             }
                         )
                         HorizontalDivider()
                     }
+
+                    // Show pending invites
+                    if (invitesRes is DataResult.Success) {
+                        val pendingInvites = (invitesRes as DataResult.Success).data.filter { !it.used }
+                        if (pendingInvites.isNotEmpty()) {
+                            item {
+                                Spacer(Modifier.height(16.dp))
+                                Text("Invitaciones Pendientes", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(vertical = 8.dp))
+                            }
+                            items(pendingInvites) { invite ->
+                                ListItem(
+                                    headlineContent = { Text("Token: ${invite.token.take(8)}...") },
+                                    supportingContent = { Text("Expira: ${invite.expiresAt.replace("T", " ")}") },
+                                    leadingContent = {
+                                        Icon(Icons.Default.HourglassEmpty, null, tint = MaterialTheme.colorScheme.secondary)
+                                    },
+                                    trailingContent = {
+                                        Row {
+                                            IconButton(onClick = { shareInviteLink(context, "repartija://join?token=${invite.token}") }) {
+                                                Icon(Icons.Default.Share, contentDescription = "Reenviar")
+                                            }
+                                            IconButton(onClick = { viewModel.deleteInvite(invite.id) }) {
+                                                Icon(Icons.Default.Cancel, contentDescription = "Cancelar invitación", tint = MaterialTheme.colorScheme.error)
+                                            }
+                                        }
+                                    }
+                                )
+                                HorizontalDivider()
+                            }
+                        }
+                    }
                 }
             }
         }
     }
+
+    // ── Add member by email dialog ───────────────────────────────
+    if (showAddMemberDialog) {
+        AddMemberDialog(
+            searchResult = searchResult,
+            onSearch = { viewModel.searchUserByEmail(it) },
+            onAdd = { userId -> viewModel.addMemberToCurrentGroup(userId) },
+            onDismiss = { showAddMemberDialog = false; viewModel.clearSearchResult() }
+        )
+    }
+
+    // ── Confirm remove dialog ────────────────────────────────────
+    removingMember?.let { member ->
+        AlertDialog(
+            onDismissRequest = { removingMember = null },
+            icon = { Icon(Icons.Default.PersonRemove, null, tint = MaterialTheme.colorScheme.error) },
+            title = { Text("Quitar a ${member.displayName}?") },
+            text = { Text("Se eliminará del grupo. Esta acción no se puede deshacer.") },
+            confirmButton = {
+                Button(
+                    onClick = { viewModel.removeMemberFromCurrentGroup(member.id); removingMember = null },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) { Text("Quitar") }
+            },
+            dismissButton = {
+                TextButton(onClick = { removingMember = null }) { Text("Cancelar") }
+            }
+        )
+    }
+
+    // ── Balance not zero warning ─────────────────────────────────
+    removeBlockedMessage?.let { msg ->
+        AlertDialog(
+            onDismissRequest = { removeBlockedMessage = null },
+            icon = { Icon(Icons.Default.Block, null, tint = MaterialTheme.colorScheme.error) },
+            title = { Text("No se puede quitar") },
+            text = { Text(msg) },
+            confirmButton = {
+                Button(onClick = { removeBlockedMessage = null }) { Text("Entendido") }
+            }
+        )
+    }
+}
+
+@Composable
+fun AddMemberDialog(
+    searchResult: DataResult<Profile>?,
+    onSearch: (String) -> Unit,
+    onAdd: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var emailQuery by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Buscar por Email") },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                OutlinedTextField(
+                    value = emailQuery,
+                    onValueChange = { emailQuery = it },
+                    label = { Text("Email del usuario") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                    trailingIcon = {
+                        IconButton(
+                            onClick = { if (emailQuery.isNotBlank()) onSearch(emailQuery.trim()) },
+                            enabled = emailQuery.isNotBlank()
+                        ) {
+                            Icon(Icons.Default.Search, contentDescription = "Buscar")
+                        }
+                    },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                when (searchResult) {
+                    null -> {
+                        Text("Ingresá el email para buscar.", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    }
+                    is DataResult.Loading -> {
+                        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                        }
+                    }
+                    is DataResult.Error -> {
+                        Text(searchResult.message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    }
+                    is DataResult.Success -> {
+                        val profile = searchResult.data
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(12.dp).fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier.size(36.dp).clip(CircleShape)
+                                        .background(MaterialTheme.colorScheme.primary),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(profile.displayName.take(1).uppercase(), color = MaterialTheme.colorScheme.onPrimary)
+                                }
+                                Spacer(Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(profile.displayName, fontWeight = FontWeight.Bold)
+                                    Text(profile.email, style = MaterialTheme.typography.bodySmall)
+                                }
+                                FilledTonalButton(onClick = { onAdd(profile.id) }) {
+                                    Text("Agregar")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cerrar") }
+        }
+    )
 }
 
 enum class SplitMethod { EQUAL, PERCENTAGE }
@@ -678,3 +1031,14 @@ fun SyncIndicator(isSyncing: Boolean) {
         )
     }
 }
+
+private fun shareInviteLink(context: android.content.Context, url: String) {
+    val sendIntent = Intent().apply {
+        action = Intent.ACTION_SEND
+        putExtra(Intent.EXTRA_TEXT, "¡Únete a mi grupo en Repartija para compartir gastos! Haz clic aquí: $url")
+        type = "text/plain"
+    }
+    val shareIntent = Intent.createChooser(sendIntent, "Invitar al grupo")
+    context.startActivity(shareIntent)
+}
+

@@ -43,4 +43,40 @@ class GroupInviteRepository @Inject constructor(
             DataResult.Error(e.message ?: "Unknown Error", e)
         }
     }
+
+    suspend fun getInviteByToken(token: String): DataResult<GroupInvite> {
+        return try {
+            val result = supabaseClient.postgrest[Tables.GROUP_INVITES].select {
+                filter { eq("token", token) }
+            }.decodeSingle<GroupInvite>()
+            DataResult.Success(result)
+        } catch (e: Exception) {
+            DataResult.Error("Invite not found or invalid token", e)
+        }
+    }
+
+    suspend fun markInviteAsUsed(inviteId: String): DataResult<Unit> {
+        return try {
+            supabaseClient.postgrest[Tables.GROUP_INVITES].update({
+                set("used", true)
+            }) {
+                filter { eq("id", inviteId) }
+            }
+            DataResult.Success(Unit)
+        } catch (e: Exception) {
+            DataResult.Error(e.message ?: "Unknown Error", e)
+        }
+    }
+
+    suspend fun deleteInvite(inviteId: String, groupId: String): DataResult<Unit> {
+        return try {
+            supabaseClient.postgrest[Tables.GROUP_INVITES].delete {
+                filter { eq("id", inviteId) }
+            }
+            fetchInvites(groupId)
+            DataResult.Success(Unit)
+        } catch (e: Exception) {
+            DataResult.Error(e.message ?: "Unknown Error", e)
+        }
+    }
 }
