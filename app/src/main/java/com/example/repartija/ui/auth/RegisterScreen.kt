@@ -10,8 +10,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.paint
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -32,13 +31,8 @@ fun RegisterScreen(
     val authState by viewModel.authState.collectAsState()
 
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .paint(
-                painterResource(id = R.drawable.bg_pattern),
-                contentScale = ContentScale.Crop,
-                alpha = 0.15f
-            )
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
     ) {
         Column(
             modifier = Modifier
@@ -75,7 +69,11 @@ fun RegisterScreen(
                 label = { Text("Nombre Completo") },
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(16.dp),
-                singleLine = true
+                singleLine = true,
+                colors = OutlinedTextFieldDefaults.colors(
+                    unfocusedContainerColor = Color.White.copy(alpha = 0.5f),
+                    focusedContainerColor = Color.White.copy(alpha = 0.8f)
+                )
             )
             Spacer(modifier = Modifier.height(12.dp))
 
@@ -86,7 +84,11 @@ fun RegisterScreen(
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(16.dp),
-                singleLine = true
+                singleLine = true,
+                colors = OutlinedTextFieldDefaults.colors(
+                    unfocusedContainerColor = Color.White.copy(alpha = 0.5f),
+                    focusedContainerColor = Color.White.copy(alpha = 0.8f)
+                )
             )
             Spacer(modifier = Modifier.height(12.dp))
 
@@ -98,7 +100,11 @@ fun RegisterScreen(
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(16.dp),
-                singleLine = true
+                singleLine = true,
+                colors = OutlinedTextFieldDefaults.colors(
+                    unfocusedContainerColor = Color.White.copy(alpha = 0.5f),
+                    focusedContainerColor = Color.White.copy(alpha = 0.8f)
+                )
             )
             Spacer(modifier = Modifier.height(20.dp))
 

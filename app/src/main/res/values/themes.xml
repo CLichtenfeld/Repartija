@@ -1,5 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-
+    <!-- Tema base de la aplicación -->
     <style name="Theme.Repartija" parent="android:Theme.Material.Light.NoActionBar" />
+
+    <!-- Tema para la Splash Screen -->
+    <style name="Theme.App.Starting" parent="Theme.SplashScreen">
+        <!-- Fondo de la splash (usando el WarmWhite de tu app) -->
+        <item name="windowSplashScreenBackground">#FAF8F5</item>
+        <!-- Icono central (tu logo con padding para que no se vea cuadrado) -->
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_logo_v2</item>
+        <!-- Tema al que cambiar cuando termine la carga -->
+        <item name="postSplashScreenTheme">@style/Theme.Repartija</item>
+    </style>
 </resources>

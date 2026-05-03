@@ -3,7 +3,10 @@ package com.example.repartija.data.repository
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.auth.status.SessionStatus
 import io.github.jan.supabase.auth.auth
+import io.github.jan.supabase.auth.providers.builtin.Email
 import io.github.jan.supabase.auth.user.UserInfo
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
@@ -29,4 +32,25 @@ class SessionRepository @Inject constructor(
             started = SharingStarted.WhileSubscribed(5000),
             initialValue = null
         )
+
+    suspend fun login(email: String, pass: String) {
+        supabaseClient.auth.signInWith(Email) {
+            this.email = email
+            password = pass
+        }
+    }
+
+    suspend fun register(email: String, pass: String, displayName: String) {
+        supabaseClient.auth.signUpWith(Email) {
+            this.email = email
+            password = pass
+            data = buildJsonObject {
+                put("display_name", displayName)
+            }
+        }
+    }
+
+    suspend fun logout() {
+        supabaseClient.auth.signOut()
+    }
 }

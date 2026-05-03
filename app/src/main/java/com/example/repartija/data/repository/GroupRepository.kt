@@ -56,6 +56,7 @@ class GroupRepository @Inject constructor(
             val result = supabaseClient.postgrest[Tables.GROUPS].insert(groupToInsert) {
                 select()
             }.decodeSingle<Group>()
+            fetchGroupsForUser(userId)
             DataResult.Success(result)
         } catch (e: Exception) {
             DataResult.Error(e.message ?: "Unknown Error", e)
@@ -70,6 +71,7 @@ class GroupRepository @Inject constructor(
                 select()
                 filter { eq("id", groupId) }
             }.decodeSingle<Group>()
+            sessionRepository.currentUser.value?.id?.let { fetchGroupsForUser(it) }
             DataResult.Success(result)
         } catch (e: Exception) {
             DataResult.Error(e.message ?: "Unknown Error", e)
@@ -78,6 +80,8 @@ class GroupRepository @Inject constructor(
 
     suspend fun deleteGroup(groupId: String): DataResult<Unit> {
         return try {
+            val userId = sessionRepository.currentUser.value?.id 
+                ?: throw Exception("User not logged in")
             // Delete all related data first
             supabaseClient.postgrest[Tables.GROUP_MEMBERS].delete {
                 filter { eq("group_id", groupId) }
@@ -85,6 +89,7 @@ class GroupRepository @Inject constructor(
             supabaseClient.postgrest[Tables.GROUPS].delete {
                 filter { eq("id", groupId) }
             }
+            fetchGroupsForUser(userId)
             DataResult.Success(Unit)
         } catch (e: Exception) {
             DataResult.Error(e.message ?: "Unknown Error", e)

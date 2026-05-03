@@ -43,4 +43,28 @@ class PaymentRepository @Inject constructor(
             DataResult.Error(e.message ?: "Unknown Error", e)
         }
     }
+    suspend fun deletePayment(paymentId: String, groupId: String): DataResult<Unit> {
+        return try {
+            supabaseClient.postgrest[Tables.PAYMENTS].delete {
+                filter { eq("id", paymentId) }
+            }
+            fetchPayments(groupId)
+            DataResult.Success(Unit)
+        } catch (e: Exception) {
+            DataResult.Error(e.message ?: "Unknown Error", e)
+        }
+    }
+
+    suspend fun updatePayment(payment: Payment): DataResult<Payment> {
+        return try {
+            val result = supabaseClient.postgrest[Tables.PAYMENTS].update(payment) {
+                filter { eq("id", payment.id) }
+                select()
+            }.decodeSingle<Payment>()
+            fetchPayments(payment.groupId)
+            DataResult.Success(result)
+        } catch (e: Exception) {
+            DataResult.Error(e.message ?: "Unknown Error", e)
+        }
+    }
 }

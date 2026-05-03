@@ -3,10 +3,8 @@ package com.example.repartija.ui.auth
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.repartija.data.repository.DataResult
+import com.example.repartija.data.repository.SessionRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
-import io.github.jan.supabase.SupabaseClient
-import io.github.jan.supabase.auth.auth
-import io.github.jan.supabase.auth.providers.builtin.Email
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -24,7 +22,7 @@ sealed interface AuthState {
 
 @HiltViewModel
 class AuthViewModel @Inject constructor(
-    private val supabaseClient: SupabaseClient
+    private val sessionRepository: SessionRepository
 ) : ViewModel() {
 
     private val _authState = MutableStateFlow<AuthState>(AuthState.Idle)
@@ -37,16 +35,11 @@ class AuthViewModel @Inject constructor(
     fun login(email: String, password: String) {
         viewModelScope.launch {
             _authState.value = AuthState.Loading
-            val result = runAuthCatching {
-                supabaseClient.auth.signInWith(Email) {
-                    this.email = email
-                    this.password = password
-                }
-            }
-            _authState.value = when (result) {
-                is DataResult.Success -> AuthState.Success
-                is DataResult.Error -> AuthState.Error(result.message)
-                is DataResult.Loading -> AuthState.Loading
+            try {
+                sessionRepository.login(email, password)
+                _authState.value = AuthState.Success
+            } catch (e: Exception) {
+                _authState.value = AuthState.Error(e.localizedMessage ?: "Error al iniciar sesión")
             }
         }
     }
@@ -54,34 +47,22 @@ class AuthViewModel @Inject constructor(
     fun register(email: String, password: String, displayName: String) {
         viewModelScope.launch {
             _authState.value = AuthState.Loading
-            val result = runAuthCatching {
-                supabaseClient.auth.signUpWith(Email) {
-                    this.email = email
-                    this.password = password
-                    data = buildJsonObject {
-                        put("display_name", displayName)
-                    }
-                }
-            }
-            _authState.value = when (result) {
-                is DataResult.Success -> AuthState.Success
-                is DataResult.Error -> AuthState.Error(result.message)
-                is DataResult.Loading -> AuthState.Loading
+            try {
+                sessionRepository.register(email, password, displayName)
+                _authState.value = AuthState.Success
+            } catch (e: Exception) {
+                _authState.value = AuthState.Error(e.localizedMessage ?: "Error al registrarse")
             }
         }
     }
 
     fun logout() {
         viewModelScope.launch {
-            runAuthCatching { supabaseClient.auth.signOut() }
-        }
-    }
-
-    private suspend fun <T> runAuthCatching(block: suspend () -> T): DataResult<T> {
-        return try {
-            DataResult.Success(block())
-        } catch (e: Exception) {
-            DataResult.Error(e.localizedMessage ?: "Error desconocido", e)
+            try {
+                sessionRepository.logout()
+            } catch (e: Exception) {
+                // Ignore logout errors usually
+            }
         }
     }
 }

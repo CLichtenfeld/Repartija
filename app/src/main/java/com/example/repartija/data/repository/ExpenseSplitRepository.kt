@@ -45,4 +45,14 @@ class ExpenseSplitRepository @Inject constructor(
             DataResult.Error(e.message ?: "Unknown Error", e)
         }
     }
+    suspend fun deleteSplitsForExpense(expenseId: String): DataResult<Unit> {
+        return try {
+            supabaseClient.postgrest[Tables.EXPENSE_SPLITS].delete {
+                filter { eq("expense_id", expenseId) }
+            }
+            DataResult.Success(Unit)
+        } catch (e: Exception) {
+            DataResult.Error(e.message ?: "Unknown Error", e)
+        }
+    }
 }

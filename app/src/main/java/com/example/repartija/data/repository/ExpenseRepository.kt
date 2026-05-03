@@ -43,4 +43,28 @@ class ExpenseRepository @Inject constructor(
             DataResult.Error(e.message ?: "Unknown Error", e)
         }
     }
+    suspend fun deleteExpense(expenseId: String, groupId: String): DataResult<Unit> {
+        return try {
+            supabaseClient.postgrest[Tables.EXPENSES].delete {
+                filter { eq("id", expenseId) }
+            }
+            fetchExpenses(groupId)
+            DataResult.Success(Unit)
+        } catch (e: Exception) {
+            DataResult.Error(e.message ?: "Unknown Error", e)
+        }
+    }
+
+    suspend fun updateExpense(expense: Expense): DataResult<Expense> {
+        return try {
+            val result = supabaseClient.postgrest[Tables.EXPENSES].update(expense) {
+                filter { eq("id", expense.id) }
+                select()
+            }.decodeSingle<Expense>()
+            fetchExpenses(expense.groupId)
+            DataResult.Success(result)
+        } catch (e: Exception) {
+            DataResult.Error(e.message ?: "Unknown Error", e)
+        }
+    }
 }

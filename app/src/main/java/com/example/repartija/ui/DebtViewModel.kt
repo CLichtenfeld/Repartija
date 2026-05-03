@@ -37,10 +37,18 @@ class DebtViewModel @Inject constructor(
     private val _currentUserId = MutableStateFlow<String?>(null)
     val currentUserId: StateFlow<String?> = _currentUserId.asStateFlow()
 
-    val allGroups: StateFlow<DataResult<List<Group>>> = groupRepository.groups
-
     /** Realtime sync indicator */
     val isSyncing: StateFlow<Boolean> = realtimeManager.isSyncing
+
+    val selectedGroup: StateFlow<DataResult<Group?>> = combine(
+        groupRepository.groups, _selectedGroupId
+    ) { groupsRes, selectedId ->
+        if (groupsRes is DataResult.Success) {
+            DataResult.Success(groupsRes.data.find { it.id == selectedId })
+        } else {
+            DataResult.Loading
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DataResult.Loading)
 
     /** Trigger to force re-fetch of expenses/payments/members inside a group */
     private val _refreshTrigger = MutableStateFlow(0)
@@ -49,24 +57,33 @@ class DebtViewModel @Inject constructor(
     val pendingJoinToken: StateFlow<String?> = _pendingJoinToken.asStateFlow()
 
     init {
-        // Track auth session → set userId → fetch groups
+        observeAuthSession()
+        observeSelectedGroupChanges()
+        observeRealtimeChanges()
+    }
+
+    private fun observeAuthSession() {
         viewModelScope.launch {
             sessionRepository.currentUser.collect { user ->
                 val uid = user?.id
                 _currentUserId.value = uid
                 if (uid != null) {
                     groupRepository.fetchGroupsForUser(uid)
-                    // Auto-process pending token if one was captured before login
-                    val token = _pendingJoinToken.value
-                    if (token != null) {
-                        processPendingToken(token)
-                        _pendingJoinToken.value = null
-                    }
+                    handlePendingJoinToken()
                 }
             }
         }
+    }
 
-        // Subscribe/unsubscribe Realtime when group changes
+    private fun handlePendingJoinToken() {
+        val token = _pendingJoinToken.value
+        if (token != null) {
+            processPendingToken(token)
+            _pendingJoinToken.value = null
+        }
+    }
+
+    private fun observeSelectedGroupChanges() {
         viewModelScope.launch {
             _selectedGroupId.collect { groupId ->
                 if (groupId != null) {
@@ -76,21 +93,18 @@ class DebtViewModel @Inject constructor(
                 }
             }
         }
+    }
 
-        // Listen for Realtime table changes → re-fetch appropriate data
+    private fun observeRealtimeChanges() {
         viewModelScope.launch {
             realtimeManager.tableChanged.collect { table ->
                 val groupId = _selectedGroupId.value ?: return@collect
                 when (table) {
-                    Tables.EXPENSES, Tables.EXPENSE_SPLITS -> {
-                        _refreshTrigger.value++
-                    }
-                    Tables.PAYMENTS -> {
+                    Tables.EXPENSES, Tables.EXPENSE_SPLITS, Tables.PAYMENTS -> {
                         _refreshTrigger.value++
                     }
                     Tables.GROUP_MEMBERS -> {
                         _memberRefreshTrigger.value++
-                        // Also refresh the user's groups in case they were added to a new one
                         _currentUserId.value?.let { groupRepository.fetchGroupsForUser(it) }
                     }
                 }
@@ -117,22 +131,23 @@ class DebtViewModel @Inject constructor(
 
             flow {
                 emit(DataResult.Loading)
-                val membersRes = groupMemberRepository.fetchMembers(groupId)
-                if (membersRes is DataResult.Success) {
-                    val profiles = mutableListOf<Profile>()
-                    for (member in membersRes.data) {
-                        val profileRes = profileRepository.getProfile(member.userId)
-                        if (profileRes is DataResult.Success) {
-                            profiles.add(profileRes.data)
-                        }
-                    }
-                    emit(DataResult.Success(profiles))
-                } else if (membersRes is DataResult.Error) {
-                    emit(DataResult.Error(membersRes.message))
-                }
+                emit(fetchMemberProfiles(groupId))
             }
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DataResult.Loading)
+
+    private suspend fun fetchMemberProfiles(groupId: String): DataResult<List<Profile>> {
+        val membersRes = groupMemberRepository.fetchMembers(groupId)
+        return if (membersRes is DataResult.Success) {
+            val profiles = membersRes.data.mapNotNull { member ->
+                (profileRepository.getProfile(member.userId) as? DataResult.Success)?.data
+            }
+            DataResult.Success(profiles)
+        } else {
+            val errorMsg = (membersRes as? DataResult.Error)?.message ?: "Error fetching members"
+            DataResult.Error(errorMsg)
+        }
+    }
 
     // ── Invites for the selected group ──────────────────────────────
 
@@ -208,19 +223,13 @@ class DebtViewModel @Inject constructor(
 
     // ── Actions ─────────────────────────────────────────────────────
 
+    private val _actionResult = MutableStateFlow<String?>(null)
+    val actionResult: StateFlow<String?> = _actionResult.asStateFlow()
+
+    fun clearActionResult() { _actionResult.value = null }
+
     fun selectGroup(groupId: String?) {
         _selectedGroupId.value = groupId
-    }
-
-    fun addGroup(name: String) {
-        val userId = _currentUserId.value ?: return
-        viewModelScope.launch {
-            val res = groupRepository.createGroup(Group(name = name, createdBy = userId))
-            if (res is DataResult.Success) {
-                groupMemberRepository.addMember(GroupMember(groupId = res.data.id, userId = userId))
-                groupRepository.fetchGroupsForUser(userId)
-            }
-        }
     }
 
     fun makePayment(toUserId: String, amount: Double) {
@@ -263,60 +272,6 @@ class DebtViewModel @Inject constructor(
                 expenseSplitRepository.addSplits(splits)
             }
             _refreshTrigger.value++
-        }
-    }
-
-    // ── Group management ────────────────────────────────────────────
-
-    private val _actionResult = MutableStateFlow<String?>(null)
-    val actionResult: StateFlow<String?> = _actionResult.asStateFlow()
-
-    fun clearActionResult() { _actionResult.value = null }
-
-    fun renameGroup(groupId: String, newName: String) {
-        val userId = _currentUserId.value ?: return
-        viewModelScope.launch {
-            val res = groupRepository.updateGroup(groupId, newName)
-            if (res is DataResult.Error) {
-                _actionResult.value = res.message
-            }
-            groupRepository.fetchGroupsForUser(userId)
-        }
-    }
-
-    /**
-     * Returns true if all simplified debts for a group are $0.00 (empty list).
-     * Must be called after data is loaded for the group.
-     */
-    suspend fun areAllBalancesZero(groupId: String): Boolean {
-        val expRes = expenseRepository.fetchExpenses(groupId)
-        if (expRes !is DataResult.Success) return false
-
-        val allSplits = mutableListOf<ExpenseSplit>()
-        for (exp in expRes.data) {
-            val sr = expenseSplitRepository.fetchSplitsForExpense(exp.id)
-            if (sr is DataResult.Success) allSplits.addAll(sr.data)
-        }
-
-        val payRes = paymentRepository.fetchPayments(groupId)
-        if (payRes !is DataResult.Success) return false
-
-        val debts = balanceRepository.calculateSimplifiedDebts(expRes.data, allSplits, payRes.data)
-        return debts.isEmpty()
-    }
-
-    fun deleteGroup(groupId: String) {
-        val userId = _currentUserId.value ?: return
-        viewModelScope.launch {
-            val res = groupRepository.deleteGroup(groupId)
-            if (res is DataResult.Error) {
-                _actionResult.value = res.message
-            } else {
-                if (_selectedGroupId.value == groupId) {
-                    _selectedGroupId.value = null
-                }
-            }
-            groupRepository.fetchGroupsForUser(userId)
         }
     }
 
@@ -413,39 +368,112 @@ class DebtViewModel @Inject constructor(
         viewModelScope.launch {
             val inviteRes = groupInviteRepository.getInviteByToken(token)
             if (inviteRes is DataResult.Success) {
-                val invite = inviteRes.data
-
-                if (invite.used) {
-                    _actionResult.value = "El enlace de invitación ya ha sido utilizado."
-                    return@launch
-                }
-
-                try {
-                    val expirationDate = LocalDateTime.parse(invite.expiresAt, DateTimeFormatter.ISO_DATE_TIME)
-                    if (LocalDateTime.now().isAfter(expirationDate)) {
-                        _actionResult.value = "El enlace de invitación ha expirado."
-                        return@launch
-                    }
-                } catch (e: Exception) {
-                    // Fallback formatting parse issue? Better safe to reject.
-                    _actionResult.value = "Formato de fecha inválido en la invitación."
-                    return@launch
-                }
-
-                // Add member to group
-                val addRes = groupMemberRepository.addMember(GroupMember(groupId = invite.groupId, userId = userId))
-                if (addRes is DataResult.Success) {
-                    groupInviteRepository.markInviteAsUsed(invite.id)
-                    // Refresh groups and select the new one
-                    groupRepository.fetchGroupsForUser(userId)
-                    _selectedGroupId.value = invite.groupId
-                    _actionResult.value = "Te uniste al grupo exitosamente."
-                } else {
-                    _actionResult.value = "Error al unirse al grupo."
-                }
+                handleValidInvite(inviteRes.data, userId)
             } else if (inviteRes is DataResult.Error) {
                 _actionResult.value = "Invitación no encontrada o inválida."
             }
+        }
+    }
+
+    private suspend fun handleValidInvite(invite: GroupInvite, userId: String) {
+        if (invite.used) {
+            _actionResult.value = "El enlace de invitación ya ha sido utilizado."
+            return
+        }
+
+        if (isInviteExpired(invite)) {
+            _actionResult.value = "El enlace de invitación ha expirado."
+            return
+        }
+
+        joinGroupViaInvite(invite, userId)
+    }
+
+    private fun isInviteExpired(invite: GroupInvite): Boolean {
+        return try {
+            val expirationDate = LocalDateTime.parse(invite.expiresAt, DateTimeFormatter.ISO_DATE_TIME)
+            LocalDateTime.now().isAfter(expirationDate)
+        } catch (e: Exception) {
+            true
+        }
+    }
+
+    private suspend fun joinGroupViaInvite(invite: GroupInvite, userId: String) {
+        val addRes = groupMemberRepository.addMember(GroupMember(groupId = invite.groupId, userId = userId))
+        if (addRes is DataResult.Success) {
+            groupInviteRepository.markInviteAsUsed(invite.id)
+            groupRepository.fetchGroupsForUser(userId)
+            _selectedGroupId.value = invite.groupId
+            _actionResult.value = "Te uniste al grupo exitosamente."
+        } else {
+            _actionResult.value = "Error al unirse al grupo."
+        }
+    }
+    fun deleteExpense(expenseId: String) {
+        val groupId = _selectedGroupId.value ?: return
+        viewModelScope.launch {
+            // Splits will be deleted by cascade if DB is configured, but let's be explicit if not sure.
+            // Requirement says: "delete from expenses table (cascade deletes splits)"
+            val res = expenseRepository.deleteExpense(expenseId, groupId)
+            if (res is DataResult.Error) {
+                _actionResult.value = res.message
+            }
+            _refreshTrigger.value++
+        }
+    }
+
+    fun deletePayment(paymentId: String) {
+        val groupId = _selectedGroupId.value ?: return
+        viewModelScope.launch {
+            val res = paymentRepository.deletePayment(paymentId, groupId)
+            if (res is DataResult.Error) {
+                _actionResult.value = res.message
+            }
+            _refreshTrigger.value++
+        }
+    }
+
+    fun updateExpense(expense: Expense, newDescription: String, newAmount: Double) {
+        val groupId = _selectedGroupId.value ?: return
+        viewModelScope.launch {
+            val updatedExpense = expense.copy(description = newDescription, amount = newAmount)
+            val res = expenseRepository.updateExpense(updatedExpense)
+            
+            if (res is DataResult.Success) {
+                handleExpenseAmountChange(expense, newAmount)
+            } else if (res is DataResult.Error) {
+                _actionResult.value = res.message
+            }
+            _refreshTrigger.value++
+        }
+    }
+
+    private suspend fun handleExpenseAmountChange(oldExpense: Expense, newAmount: Double) {
+        if (oldExpense.amount == newAmount) return
+        
+        val oldAmount = oldExpense.amount
+        val ratio = if (oldAmount > 0) newAmount / oldAmount else 1.0
+        
+        val splitsRes = expenseSplitRepository.fetchSplitsForExpense(oldExpense.id)
+        if (splitsRes is DataResult.Success) {
+            val updatedSplits = splitsRes.data.map { split ->
+                split.copy(amount = split.amount * ratio)
+            }
+            // Delete old and insert new to be sure
+            expenseSplitRepository.deleteSplitsForExpense(oldExpense.id)
+            expenseSplitRepository.addSplits(updatedSplits)
+        }
+    }
+
+    fun updatePayment(payment: Payment, newAmount: Double) {
+        val groupId = _selectedGroupId.value ?: return
+        viewModelScope.launch {
+            val updatedPayment = payment.copy(amount = newAmount)
+            val res = paymentRepository.updatePayment(updatedPayment)
+            if (res is DataResult.Error) {
+                _actionResult.value = res.message
+            }
+            _refreshTrigger.value++
         }
     }
 }
