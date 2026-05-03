@@ -2,195 +2,195 @@ package com.example.repartija.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.repartija.data.*
-import com.example.repartija.domain.SettlementManager
-import com.example.repartija.domain.SettlementSuggestion
+import com.example.repartija.data.model.*
+import com.example.repartija.data.repository.*
+import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.time.LocalDate
-import kotlin.math.abs
-import kotlin.math.min
+import javax.inject.Inject
 
-class DebtViewModel(private val repository: DebtRepository) : ViewModel() {
+@HiltViewModel
+class DebtViewModel @Inject constructor(
+    private val groupRepository: GroupRepository,
+    private val groupMemberRepository: GroupMemberRepository,
+    private val profileRepository: ProfileRepository,
+    private val expenseRepository: ExpenseRepository,
+    private val expenseSplitRepository: ExpenseSplitRepository,
+    private val paymentRepository: PaymentRepository,
+    private val balanceRepository: BalanceRepository,
+    private val sessionRepository: SessionRepository
+) : ViewModel() {
 
-    private val _selectedGroupId = MutableStateFlow<Int?>(null)
-    val selectedGroupId: StateFlow<Int?> = _selectedGroupId.asStateFlow()
+    private val _selectedGroupId = MutableStateFlow<String?>(null)
+    val selectedGroupId: StateFlow<String?> = _selectedGroupId.asStateFlow()
 
-    private val _currentMemberId = MutableStateFlow<Int?>(null)
-    val currentMemberId: StateFlow<Int?> = _currentMemberId.asStateFlow()
+    /** The current user's Supabase UUID, set from the auth session. */
+    private val _currentUserId = MutableStateFlow<String?>(null)
+    val currentUserId: StateFlow<String?> = _currentUserId.asStateFlow()
 
-    val allGroups: StateFlow<List<Group>> = repository.getAllGroups()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val allGroups: StateFlow<DataResult<List<Group>>> = groupRepository.groups
 
-    @OptIn(ExperimentalCoroutinesApi::class)
-    val currentMembers: StateFlow<List<Member>> = _selectedGroupId
-        .flatMapLatest { id -> id?.let { repository.getMembersByGroup(it) } ?: flowOf(emptyList()) }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    @OptIn(ExperimentalCoroutinesApi::class)
-    val currentDebts: StateFlow<List<Debt>> = _selectedGroupId
-        .flatMapLatest { id -> id?.let { repository.getDebtsByGroup(it) } ?: flowOf(emptyList()) }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    @OptIn(ExperimentalCoroutinesApi::class)
-    val currentPayments: StateFlow<List<Payment>> = _selectedGroupId
-        .flatMapLatest { id -> id?.let { repository.getPaymentsByGroup(it) } ?: flowOf(emptyList()) }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    private val _globalTna = MutableStateFlow(30.0)
-    val globalTna: StateFlow<Double> = _globalTna.asStateFlow()
-
-    val settlementSuggestions: StateFlow<List<SettlementSuggestion>> = 
-        combine(currentDebts, currentMembers) { debts, members ->
-            SettlementManager.calculateSuggestions(debts, members)
-        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    fun selectGroup(groupId: Int?) {
-        _selectedGroupId.value = groupId
-        // Reset current member when group changes if needed, or keep it if it belongs to the group
+    init {
+        // Track auth session → set userId → fetch groups
+        viewModelScope.launch {
+            sessionRepository.currentUser.collect { user ->
+                val uid = user?.id
+                _currentUserId.value = uid
+                if (uid != null) {
+                    groupRepository.fetchGroupsForUser(uid)
+                }
+            }
+        }
     }
 
-    fun setCurrentMember(memberId: Int?) {
-        _currentMemberId.value = memberId
+    // ── Members for the selected group ──────────────────────────────
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val currentMembers: StateFlow<DataResult<List<Profile>>> = _selectedGroupId
+        .flatMapLatest { groupId ->
+            if (groupId == null) return@flatMapLatest flowOf<DataResult<List<Profile>>>(DataResult.Success(emptyList()))
+
+            flow {
+                emit(DataResult.Loading)
+                val membersRes = groupMemberRepository.fetchMembers(groupId)
+                if (membersRes is DataResult.Success) {
+                    val profiles = mutableListOf<Profile>()
+                    for (member in membersRes.data) {
+                        val profileRes = profileRepository.getProfile(member.userId)
+                        if (profileRes is DataResult.Success) {
+                            profiles.add(profileRes.data)
+                        }
+                    }
+                    emit(DataResult.Success(profiles))
+                } else if (membersRes is DataResult.Error) {
+                    emit(DataResult.Error(membersRes.message))
+                }
+            }
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DataResult.Loading)
+
+    // ── Expenses ────────────────────────────────────────────────────
+
+    /** Trigger to force re-fetch of expenses/payments inside a group */
+    private val _refreshTrigger = MutableStateFlow(0)
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val currentExpenses: StateFlow<DataResult<List<Expense>>> = combine(
+        _selectedGroupId, _refreshTrigger
+    ) { id, _ -> id }
+        .flatMapLatest { id ->
+            if (id != null) {
+                flow { emit(expenseRepository.fetchExpenses(id)) }
+            } else flowOf<DataResult<List<Expense>>>(DataResult.Success(emptyList()))
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DataResult.Loading)
+
+    // ── Expense splits ──────────────────────────────────────────────
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val currentSplits: StateFlow<DataResult<List<ExpenseSplit>>> = currentExpenses
+        .flatMapLatest { expensesRes ->
+            if (expensesRes is DataResult.Success) {
+                flow {
+                    val allSplits = mutableListOf<ExpenseSplit>()
+                    for (exp in expensesRes.data) {
+                        val splitsRes = expenseSplitRepository.fetchSplitsForExpense(exp.id)
+                        if (splitsRes is DataResult.Success) {
+                            allSplits.addAll(splitsRes.data)
+                        }
+                    }
+                    emit(DataResult.Success(allSplits))
+                }
+            } else {
+                flowOf<DataResult<List<ExpenseSplit>>>(DataResult.Success(emptyList()))
+            }
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DataResult.Loading)
+
+    // ── Payments ────────────────────────────────────────────────────
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val currentPayments: StateFlow<DataResult<List<Payment>>> = combine(
+        _selectedGroupId, _refreshTrigger
+    ) { id, _ -> id }
+        .flatMapLatest { id ->
+            if (id != null) {
+                flow { emit(paymentRepository.fetchPayments(id)) }
+            } else flowOf<DataResult<List<Payment>>>(DataResult.Success(emptyList()))
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DataResult.Loading)
+
+    // ── Simplified debts (calculated in Repository) ─────────────────
+
+    val currentDebts: StateFlow<List<PairBalance>> = combine(
+        currentExpenses, currentSplits, currentPayments
+    ) { expRes, splitRes, payRes ->
+        if (expRes is DataResult.Success && splitRes is DataResult.Success && payRes is DataResult.Success) {
+            balanceRepository.calculateSimplifiedDebts(expRes.data, splitRes.data, payRes.data)
+        } else {
+            emptyList()
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // ── Actions ─────────────────────────────────────────────────────
+
+    fun selectGroup(groupId: String?) {
+        _selectedGroupId.value = groupId
     }
 
     fun addGroup(name: String) {
+        val userId = _currentUserId.value ?: return
         viewModelScope.launch {
-            repository.addGroup(Group(name = name))
-        }
-    }
-
-    fun updateGlobalTna(newTna: Double) {
-        _globalTna.value = newTna
-    }
-
-    fun updateAllInterests() {
-        viewModelScope.launch {
-            val debts = currentDebts.value
-            val today = LocalDate.now()
-            debts.forEach { debt ->
-                repository.updateDebtInterest(debt.id, today)
+            val res = groupRepository.createGroup(Group(name = name, createdBy = userId))
+            if (res is DataResult.Success) {
+                groupMemberRepository.addMember(GroupMember(groupId = res.data.id, userId = userId))
+                groupRepository.fetchGroupsForUser(userId) // Refresh groups list
             }
         }
     }
 
-    fun makePayment(debtId: Int, amount: Double) {
+    fun makePayment(toUserId: String, amount: Double) {
+        val groupId = _selectedGroupId.value ?: return
+        val fromUserId = _currentUserId.value ?: return
         viewModelScope.launch {
-            repository.registerPayment(debtId, amount, LocalDate.now())
-        }
-    }
-
-    fun deletePayment(payment: Payment) {
-        viewModelScope.launch {
-            repository.deletePayment(payment)
-        }
-    }
-
-    fun deleteExpense(debt: Debt) {
-        viewModelScope.launch {
-            repository.deleteDebt(debt)
-        }
-    }
-
-    fun updateExpense(debt: Debt, newDescription: String, newAmount: Double) {
-        viewModelScope.launch {
-            val updatedDebt = debt.copy(
-                description = newDescription,
-                originalAmount = newAmount,
-                remainingBalance = newAmount
+            paymentRepository.addPayment(
+                Payment(
+                    groupId = groupId,
+                    fromUser = fromUserId,
+                    toUser = toUserId,
+                    amount = amount,
+                    date = LocalDate.now().toString()
+                )
             )
-            repository.updateDebt(updatedDebt)
+            _refreshTrigger.value++
         }
     }
 
-    fun executeSettlement(suggestion: SettlementSuggestion) {
+    fun addNewExpense(description: String, amount: Double, paidBy: String, shares: Map<String, Double>) {
         val groupId = _selectedGroupId.value ?: return
         viewModelScope.launch {
-            repository.executeSettlement(
-                suggestion.fromMember.id,
-                suggestion.toMember.id,
-                suggestion.amount,
-                LocalDate.now(),
-                groupId
+            val expRes = expenseRepository.addExpense(
+                Expense(
+                    groupId = groupId,
+                    paidBy = paidBy,
+                    amount = amount,
+                    description = description,
+                    date = LocalDate.now().toString()
+                )
             )
-        }
-    }
-
-    fun updateMember(member: Member, newName: String) {
-        viewModelScope.launch {
-            repository.updateMember(member.copy(name = newName))
-        }
-    }
-
-    fun deleteMember(member: Member) {
-        viewModelScope.launch {
-            repository.deleteMember(member)
-        }
-    }
-    
-    private data class BalanceNode(val id: Int, var amount: Double)
-
-    fun addNewExpense(description: String, paidAmounts: Map<Int, Double>, shares: Map<Int, Double>) {
-        val groupId = _selectedGroupId.value ?: return
-        val tna = _globalTna.value
-        val today = LocalDate.now()
-
-        val netBalances = mutableMapOf<Int, Double>()
-        val allMemberIds = (paidAmounts.keys + shares.keys).toSet()
-        
-        allMemberIds.forEach { id ->
-            val paid = paidAmounts[id] ?: 0.0
-            val share = shares[id] ?: 0.0
-            netBalances[id] = paid - share
-        }
-
-        val creditors = netBalances.filter { it.value > 0.01 }
-            .map { BalanceNode(it.key, it.value) }
-            .sortedByDescending { it.amount }
-            .toMutableList()
-            
-        val debtors = netBalances.filter { it.value < -0.01 }
-            .map { BalanceNode(it.key, abs(it.value)) }
-            .sortedByDescending { it.amount }
-            .toMutableList()
-
-        viewModelScope.launch {
-            var cIdx = 0
-            var dIdx = 0
-            
-            while (cIdx < creditors.size && dIdx < debtors.size) {
-                val creditor = creditors[cIdx]
-                val debtor = debtors[dIdx]
-                val settlementAmount = min(creditor.amount, debtor.amount)
-                
-                if (settlementAmount > 0.01) {
-                    repository.addDebt(Debt(
-                        groupId = groupId,
-                        description = description,
-                        fromMemberId = debtor.id,
-                        toMemberId = creditor.id,
-                        originalAmount = settlementAmount,
-                        currency = "ARS",
-                        remainingBalance = settlementAmount,
-                        annualRate = tna,
-                        startDate = today,
-                        lastInterestDate = today
-                    ))
+            if (expRes is DataResult.Success) {
+                val splits = shares.map { (userId, shareAmount) ->
+                    ExpenseSplit(
+                        expenseId = expRes.data.id,
+                        userId = userId,
+                        amount = shareAmount
+                    )
                 }
-                
-                creditor.amount -= settlementAmount
-                debtor.amount -= settlementAmount
-                if (creditor.amount < 0.01) cIdx++
-                if (debtor.amount < 0.01) dIdx++
+                expenseSplitRepository.addSplits(splits)
             }
-        }
-    }
-
-    fun addMember(name: String) {
-        val groupId = _selectedGroupId.value ?: return
-        viewModelScope.launch {
-            repository.addMember(Member(groupId = groupId, name = name))
+            _refreshTrigger.value++
         }
     }
 }
