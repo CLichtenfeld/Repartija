@@ -37,7 +37,7 @@ es completamente automático para el invitado.
 - Tokens de invitación expiran a las 72 horas
 
 ## Tablas Supabase
-- profiles (id, email, display_name, created_at)
+- profiles (id, email, display_name, avatar_url, fcm_token, created_at)
 - groups (id, name, created_by, created_at)
 - group_members (group_id, user_id)
 - group_invites (id, group_id, created_by, token, expires_at, used)

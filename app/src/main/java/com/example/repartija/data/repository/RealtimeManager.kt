@@ -99,6 +99,24 @@ class RealtimeManager @Inject constructor(
                     _tableChanged.emit(Tables.GROUP_MEMBERS)
                 }.launchIn(this)
 
+                // Listen to expense_payers table
+                channel.postgresChangeFlow<PostgresAction>(schema = "public") {
+                    table = Tables.EXPENSE_PAYERS
+                }.onEach {
+                    Log.d("RealtimeManager", "Payers change: ${it::class.simpleName}")
+                    _isSyncing.value = true
+                    _tableChanged.emit(Tables.EXPENSE_PAYERS)
+                }.launchIn(this)
+
+                // Listen to profiles table
+                channel.postgresChangeFlow<PostgresAction>(schema = "public") {
+                    table = Tables.PROFILES
+                }.onEach {
+                    Log.d("RealtimeManager", "Profile change: ${it::class.simpleName}")
+                    _isSyncing.value = true
+                    _tableChanged.emit(Tables.PROFILES)
+                }.launchIn(this)
+
                 // Start the subscription
                 channel.subscribe()
                 Log.d("RealtimeManager", "Subscribed to group $groupId")

@@ -73,4 +73,16 @@ class ProfileRepository @Inject constructor(
             DataResult.Error("Error al buscar usuario: ${e.message}", e)
         }
     }
+
+    suspend fun updateProfile(profile: Profile): DataResult<Profile> {
+        return try {
+            val result = supabaseClient.postgrest[Tables.PROFILES].update(profile) {
+                filter { eq("id", profile.id) }
+                select()
+            }.decodeSingle<Profile>()
+            DataResult.Success(result)
+        } catch (e: Exception) {
+            DataResult.Error(e.message ?: "Unknown Error", e)
+        }
+    }
 }

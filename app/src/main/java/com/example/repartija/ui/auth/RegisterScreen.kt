@@ -15,6 +15,9 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.repartija.R
@@ -24,9 +27,12 @@ fun RegisterScreen(
     viewModel: AuthViewModel,
     onNavigateToLogin: () -> Unit
 ) {
-    var email by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
-    var displayName by remember { mutableStateOf("") }
+    var emailValue by remember { mutableStateOf(TextFieldValue("")) }
+    val email = emailValue.text
+    var passwordValue by remember { mutableStateOf(TextFieldValue("")) }
+    val password = passwordValue.text
+    var displayNameValue by remember { mutableStateOf(TextFieldValue("")) }
+    val displayName = displayNameValue.text
 
     val authState by viewModel.authState.collectAsState()
 
@@ -64,10 +70,14 @@ fun RegisterScreen(
             Spacer(modifier = Modifier.height(32.dp))
 
             OutlinedTextField(
-                value = displayName,
-                onValueChange = { displayName = it },
+                value = displayNameValue,
+                onValueChange = { displayNameValue = it },
                 label = { Text("Nombre Completo") },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().onFocusChanged {
+                    if (it.isFocused) {
+                        displayNameValue = displayNameValue.copy(selection = TextRange(0, displayNameValue.text.length))
+                    }
+                },
                 shape = RoundedCornerShape(16.dp),
                 singleLine = true,
                 colors = OutlinedTextFieldDefaults.colors(
@@ -78,11 +88,15 @@ fun RegisterScreen(
             Spacer(modifier = Modifier.height(12.dp))
 
             OutlinedTextField(
-                value = email,
-                onValueChange = { email = it },
+                value = emailValue,
+                onValueChange = { emailValue = it },
                 label = { Text("Correo Electrónico") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().onFocusChanged {
+                    if (it.isFocused) {
+                        emailValue = emailValue.copy(selection = TextRange(0, emailValue.text.length))
+                    }
+                },
                 shape = RoundedCornerShape(16.dp),
                 singleLine = true,
                 colors = OutlinedTextFieldDefaults.colors(
@@ -93,12 +107,16 @@ fun RegisterScreen(
             Spacer(modifier = Modifier.height(12.dp))
 
             OutlinedTextField(
-                value = password,
-                onValueChange = { password = it },
+                value = passwordValue,
+                onValueChange = { passwordValue = it },
                 label = { Text("Contraseña") },
                 visualTransformation = PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().onFocusChanged {
+                    if (it.isFocused) {
+                        passwordValue = passwordValue.copy(selection = TextRange(0, passwordValue.text.length))
+                    }
+                },
                 shape = RoundedCornerShape(16.dp),
                 singleLine = true,
                 colors = OutlinedTextFieldDefaults.colors(

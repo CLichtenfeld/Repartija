@@ -14,13 +14,23 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
+import com.example.repartija.R
 import com.example.repartija.data.model.Expense
+import com.example.repartija.data.model.ExpensePayer
+import com.example.repartija.data.model.ExpenseSplit
 import com.example.repartija.data.model.Payment
 import com.example.repartija.data.model.Profile
 import com.example.repartija.data.repository.DataResult
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 import kotlin.math.abs
 
 sealed class Movement {
@@ -49,6 +59,8 @@ fun HistoryScreen(viewModel: DebtViewModel) {
     val membersRes by viewModel.currentMembers.collectAsState()
     val debts by viewModel.currentDebts.collectAsState()
     val currentUserId by viewModel.currentUserId.collectAsState()
+    val allSplitsRes by viewModel.currentSplits.collectAsState()
+    val allPayersRes by viewModel.currentPayers.collectAsState()
 
     val expenses = (expensesRes as? DataResult.Success)?.data ?: emptyList()
     val payments = (paymentsRes as? DataResult.Success)?.data ?: emptyList()
@@ -85,6 +97,7 @@ fun HistoryScreen(viewModel: DebtViewModel) {
                 movements = movements,
                 currentUserId = currentUserId,
                 memberMap = memberMap,
+                viewModel = viewModel,
                 onMoveClick = {
                     selectedMovement = it
                     showActionSheet = true
@@ -139,11 +152,17 @@ fun HistoryScreen(viewModel: DebtViewModel) {
     movementToEdit?.let { move ->
         when (move) {
             is Movement.Exp -> {
+                val expSplits = (allSplitsRes as? DataResult.Success)?.data?.filter { it.expenseId == move.expense.id } ?: emptyList()
+                val expPayers = (allPayersRes as? DataResult.Success)?.data?.filter { it.expenseId == move.expense.id } ?: emptyList()
+                
                 EditExpenseDialog(
                     expense = move.expense,
+                    members = members,
+                    currentPayers = expPayers,
+                    currentSplits = expSplits,
                     onDismiss = { movementToEdit = null },
-                    onConfirm = { desc, amount ->
-                        viewModel.updateExpense(move.expense, desc, amount)
+                    onConfirm = { desc, amount, payers, splits, type ->
+                        viewModel.updateExpense(move.expense, desc, amount, payers, splits, type)
                         movementToEdit = null
                     }
                 )
@@ -197,11 +216,12 @@ private fun MovementList(
     movements: List<Movement>,
     currentUserId: String?,
     memberMap: Map<String, Profile>,
+    viewModel: DebtViewModel,
     onMoveClick: (Movement) -> Unit
 ) {
     LazyColumn {
         items(movements) { move ->
-            MovementCard(move, currentUserId, memberMap, onMoveClick)
+            MovementCard(move, currentUserId, memberMap, viewModel, onMoveClick)
         }
     }
 }
@@ -211,6 +231,7 @@ private fun MovementCard(
     move: Movement,
     currentUserId: String?,
     memberMap: Map<String, Profile>,
+    viewModel: DebtViewModel,
     onMoveClick: (Movement) -> Unit
 ) {
     Card(
@@ -223,7 +244,7 @@ private fun MovementCard(
     ) {
         Box(modifier = Modifier.padding(16.dp)) {
             Column {
-                MovementCardHeader(move, currentUserId, memberMap)
+                MovementCardHeader(move, currentUserId, memberMap, viewModel)
                 MovementCardFooter(move)
             }
         }
@@ -234,19 +255,23 @@ private fun MovementCard(
 private fun MovementCardHeader(
     move: Movement,
     currentUserId: String?,
-    memberMap: Map<String, Profile>
+    memberMap: Map<String, Profile>,
+    viewModel: DebtViewModel
 ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        val icon = when (move) {
-            is Movement.Exp -> Icons.AutoMirrored.Filled.ReceiptLong
-            is Movement.Pay -> Icons.Default.CheckCircle
+        val (userId, icon) = when (move) {
+            is Movement.Exp -> move.expense.paidBy to Icons.AutoMirrored.Filled.ReceiptLong
+            is Movement.Pay -> move.payment.fromUser to Icons.Default.CheckCircle
         }
-        val color = when (move) {
-            is Movement.Exp -> if (move.expense.paidBy == currentUserId) MaterialTheme.colorScheme.primary else Color.Gray
-            is Movement.Pay -> MaterialTheme.colorScheme.primary
-        }
+        val profile = memberMap[userId]
+        val avatarUrl = viewModel.getAvatarUrl(userId, profile?.avatarUrl)
 
-        Icon(icon, null, tint = color, modifier = Modifier.size(28.dp))
+        AsyncImage(
+            model = avatarUrl,
+            contentDescription = null,
+            modifier = Modifier.size(32.dp).clip(CircleShape),
+            error = painterResource(id = R.drawable.group_avatar)
+        )
         Spacer(Modifier.width(12.dp))
 
         Column(modifier = Modifier.weight(1f)) {
@@ -267,7 +292,25 @@ private fun MovementCardFooter(move: Movement) {
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
-            Text(text = move.date, style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+            val formattedDate = remember(move.date) {
+                try {
+                    if (move.date.contains("T")) {
+                        val inputFormatter = DateTimeFormatter.ISO_DATE_TIME
+                        val outputFormatter = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm", Locale.getDefault())
+                        val dt = ZonedDateTime.parse(move.date)
+                        dt.format(outputFormatter)
+                    } else {
+                        // For simple YYYY-MM-DD
+                        val inputFormatter = DateTimeFormatter.ISO_LOCAL_DATE
+                        val outputFormatter = DateTimeFormatter.ofPattern("dd/MM/yyyy", Locale.getDefault())
+                        val dt = java.time.LocalDate.parse(move.date)
+                        dt.format(outputFormatter)
+                    }
+                } catch (e: Exception) {
+                    move.date
+                }
+            }
+            Text(text = formattedDate, style = MaterialTheme.typography.labelSmall, color = Color.Gray)
         }
     }
 }

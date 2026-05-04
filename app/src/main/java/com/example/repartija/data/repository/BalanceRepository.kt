@@ -1,6 +1,7 @@
 package com.example.repartija.data.repository
 
 import com.example.repartija.data.model.Expense
+import com.example.repartija.data.model.ExpensePayer
 import com.example.repartija.data.model.ExpenseSplit
 import com.example.repartija.data.model.Payment
 import javax.inject.Inject
@@ -24,13 +25,23 @@ class BalanceRepository @Inject constructor() {
     fun calculateSimplifiedDebts(
         expenses: List<Expense>,
         splits: List<ExpenseSplit>,
-        payments: List<Payment>
+        payments: List<Payment>,
+        payers: List<ExpensePayer>
     ): List<PairBalance> {
         val balances = mutableMapOf<String, Double>()
 
-        // Expenses -> payer gets credited
+        // Payers -> payer gets credited
+        val expenseIdToPayers = payers.groupBy { it.expenseId }
         for (e in expenses) {
-            balances[e.paidBy] = (balances[e.paidBy] ?: 0.0) + e.amount
+            val epayers = expenseIdToPayers[e.id]
+            if (!epayers.isNullOrEmpty()) {
+                for (p in epayers) {
+                    balances[p.userId] = (balances[p.userId] ?: 0.0) + p.amount
+                }
+            } else {
+                // Fallback for single payer legacy data
+                balances[e.paidBy] = (balances[e.paidBy] ?: 0.0) + e.amount
+            }
         }
 
         // Splits -> user gets debited

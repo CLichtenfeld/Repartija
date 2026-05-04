@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "885422442258",
+    "project_id": "repartija-1af86",
+    "storage_bucket": "repartija-1af86.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:885422442258:android:75bd28313e7bd2434d95cb",
+        "android_client_info": {
+          "package_name": "com.example.repartija"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAtt2AcvQ-voO0oQXVSKs97HVQfyyWyduI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

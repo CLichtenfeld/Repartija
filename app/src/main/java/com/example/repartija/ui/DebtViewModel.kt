@@ -10,6 +10,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import com.example.repartija.util.ImageUtils
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
@@ -27,7 +28,10 @@ class DebtViewModel @Inject constructor(
     private val balanceRepository: BalanceRepository,
     private val sessionRepository: SessionRepository,
     private val realtimeManager: RealtimeManager,
-    private val groupInviteRepository: GroupInviteRepository
+    private val groupInviteRepository: GroupInviteRepository,
+    private val expensePayerRepository: ExpensePayerRepository,
+    private val storageRepository: StorageRepository,
+    private val notificationRepository: NotificationRepository
 ) : ViewModel() {
 
     private val _selectedGroupId = MutableStateFlow<String?>(null)
@@ -100,10 +104,10 @@ class DebtViewModel @Inject constructor(
             realtimeManager.tableChanged.collect { table ->
                 val groupId = _selectedGroupId.value ?: return@collect
                 when (table) {
-                    Tables.EXPENSES, Tables.EXPENSE_SPLITS, Tables.PAYMENTS -> {
+                    Tables.EXPENSES, Tables.EXPENSE_SPLITS, Tables.EXPENSE_PAYERS, Tables.PAYMENTS -> {
                         _refreshTrigger.value++
                     }
-                    Tables.GROUP_MEMBERS -> {
+                    Tables.GROUP_MEMBERS, Tables.PROFILES -> {
                         _memberRefreshTrigger.value++
                         _currentUserId.value?.let { groupRepository.fetchGroupsForUser(it) }
                     }
@@ -174,6 +178,28 @@ class DebtViewModel @Inject constructor(
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DataResult.Loading)
 
+    // ── Payers ────────────────────────────────────────────────────
+    
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val currentPayers: StateFlow<DataResult<List<ExpensePayer>>> = currentExpenses
+        .flatMapLatest { expensesRes ->
+            if (expensesRes is DataResult.Success) {
+                flow {
+                    val allPayers = mutableListOf<ExpensePayer>()
+                    for (exp in expensesRes.data) {
+                        val payersRes = expensePayerRepository.fetchPayersForExpense(exp.id)
+                        if (payersRes is DataResult.Success) {
+                            allPayers.addAll(payersRes.data)
+                        }
+                    }
+                    emit(DataResult.Success(allPayers))
+                }
+            } else {
+                flowOf<DataResult<List<ExpensePayer>>>(DataResult.Success(emptyList()))
+            }
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DataResult.Loading)
+
     // ── Expense splits ──────────────────────────────────────────────
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -212,10 +238,12 @@ class DebtViewModel @Inject constructor(
     // ── Simplified debts (calculated in Repository) ─────────────────
 
     val currentDebts: StateFlow<List<PairBalance>> = combine(
-        currentExpenses, currentSplits, currentPayments
-    ) { expRes, splitRes, payRes ->
-        if (expRes is DataResult.Success && splitRes is DataResult.Success && payRes is DataResult.Success) {
-            balanceRepository.calculateSimplifiedDebts(expRes.data, splitRes.data, payRes.data)
+        currentExpenses, currentSplits, currentPayers, currentPayments
+    ) { expRes, splitRes, payerRes, payRes ->
+        if (expRes is DataResult.Success && splitRes is DataResult.Success && payerRes is DataResult.Success && payRes is DataResult.Success) {
+            // We use splits and payers to calculate debts.
+            // SimplifiedDebts might need adjustment if it only used expenses.paidBy before.
+            balanceRepository.calculateSimplifiedDebts(expRes.data, splitRes.data, payRes.data, payerRes.data)
         } else {
             emptyList()
         }
@@ -236,7 +264,7 @@ class DebtViewModel @Inject constructor(
         val groupId = _selectedGroupId.value ?: return
         val fromUserId = _currentUserId.value ?: return
         viewModelScope.launch {
-            paymentRepository.addPayment(
+            val res = paymentRepository.addPayment(
                 Payment(
                     groupId = groupId,
                     fromUser = fromUserId,
@@ -245,31 +273,81 @@ class DebtViewModel @Inject constructor(
                     date = LocalDate.now().toString()
                 )
             )
+            if (res is DataResult.Success) {
+                notificationRepository.sendNotification(
+                    groupId = groupId,
+                    transactionId = res.data.id,
+                    transactionType = "payment",
+                    changedBy = fromUserId,
+                    affectedUserIds = listOf(toUserId)
+                )
+            }
             _refreshTrigger.value++
         }
     }
 
-    fun addNewExpense(description: String, amount: Double, paidBy: String, shares: Map<String, Double>) {
+    fun addNewExpense(
+        description: String,
+        amount: Double,
+        mainPayerId: String,
+        splits: List<ExpenseSplit>,
+        splitType: SplitType,
+        payers: List<ExpensePayer>
+    ) {
         val groupId = _selectedGroupId.value ?: return
         viewModelScope.launch {
             val expRes = expenseRepository.addExpense(
                 Expense(
                     groupId = groupId,
-                    paidBy = paidBy,
+                    paidBy = mainPayerId,
                     amount = amount,
                     description = description,
-                    date = LocalDate.now().toString()
+                    date = LocalDate.now().toString(),
+                    splitType = splitType.name
                 )
             )
             if (expRes is DataResult.Success) {
-                val splits = shares.map { (userId, shareAmount) ->
-                    ExpenseSplit(
-                        expenseId = expRes.data.id,
-                        userId = userId,
-                        amount = shareAmount
-                    )
-                }
-                expenseSplitRepository.addSplits(splits)
+                val expenseId = expRes.data.id
+                expenseSplitRepository.addSplits(splits.map { it.copy(expenseId = expenseId) })
+                expensePayerRepository.addPayers(payers.map { it.copy(expenseId = expenseId) })
+                
+                notificationRepository.sendNotification(
+                    groupId = groupId,
+                    transactionId = expenseId,
+                    transactionType = "expense",
+                    changedBy = mainPayerId,
+                    affectedUserIds = splits.map { it.userId }
+                )
+            }
+            _refreshTrigger.value++
+        }
+    }
+
+    fun updateExpense(
+        expense: Expense,
+        description: String,
+        amount: Double,
+        payers: List<ExpensePayer>,
+        splits: List<ExpenseSplit>,
+        splitType: SplitType
+    ) {
+        viewModelScope.launch {
+            val updatedExpense = expense.copy(
+                description = description,
+                amount = amount,
+                splitType = splitType.name,
+                paidBy = payers.firstOrNull()?.userId ?: expense.paidBy
+            )
+            val res = expenseRepository.updateExpense(updatedExpense)
+            
+            if (res is DataResult.Success) {
+                expenseSplitRepository.deleteSplitsForExpense(expense.id)
+                expenseSplitRepository.addSplits(splits.map { it.copy(expenseId = expense.id) })
+                
+                expensePayerRepository.deletePayersForExpense(expense.id)
+                expensePayerRepository.addPayers(payers.map { it.copy(expenseId = expense.id) })
+            } else if (res is DataResult.Error) {
+                _actionResult.value = res.message
             }
             _refreshTrigger.value++
         }
@@ -433,38 +511,6 @@ class DebtViewModel @Inject constructor(
         }
     }
 
-    fun updateExpense(expense: Expense, newDescription: String, newAmount: Double) {
-        val groupId = _selectedGroupId.value ?: return
-        viewModelScope.launch {
-            val updatedExpense = expense.copy(description = newDescription, amount = newAmount)
-            val res = expenseRepository.updateExpense(updatedExpense)
-            
-            if (res is DataResult.Success) {
-                handleExpenseAmountChange(expense, newAmount)
-            } else if (res is DataResult.Error) {
-                _actionResult.value = res.message
-            }
-            _refreshTrigger.value++
-        }
-    }
-
-    private suspend fun handleExpenseAmountChange(oldExpense: Expense, newAmount: Double) {
-        if (oldExpense.amount == newAmount) return
-        
-        val oldAmount = oldExpense.amount
-        val ratio = if (oldAmount > 0) newAmount / oldAmount else 1.0
-        
-        val splitsRes = expenseSplitRepository.fetchSplitsForExpense(oldExpense.id)
-        if (splitsRes is DataResult.Success) {
-            val updatedSplits = splitsRes.data.map { split ->
-                split.copy(amount = split.amount * ratio)
-            }
-            // Delete old and insert new to be sure
-            expenseSplitRepository.deleteSplitsForExpense(oldExpense.id)
-            expenseSplitRepository.addSplits(updatedSplits)
-        }
-    }
-
     fun updatePayment(payment: Payment, newAmount: Double) {
         val groupId = _selectedGroupId.value ?: return
         viewModelScope.launch {
@@ -475,5 +521,41 @@ class DebtViewModel @Inject constructor(
             }
             _refreshTrigger.value++
         }
+    }
+
+    fun updateProfileAvatar(userId: String, avatarUrl: String) {
+        viewModelScope.launch {
+            val profileRes = profileRepository.getProfile(userId)
+            if (profileRes is DataResult.Success) {
+                val updatedProfile = profileRes.data.copy(avatarUrl = avatarUrl)
+                val updateRes = profileRepository.updateProfile(updatedProfile)
+                if (updateRes is DataResult.Success) {
+                    _memberRefreshTrigger.value++
+                } else if (updateRes is DataResult.Error) {
+                    _actionResult.value = "Error al actualizar perfil: ${updateRes.message}"
+                }
+            } else if (profileRes is DataResult.Error) {
+                _actionResult.value = "Error al obtener perfil: ${profileRes.message}"
+            }
+        }
+    }
+
+    fun uploadAvatar(userId: String, bytes: ByteArray) {
+        viewModelScope.launch {
+            // Compress and resize image
+            val compressedBytes = ImageUtils.compressAndResizeImage(bytes)
+            
+            val res = storageRepository.uploadAvatar(userId, compressedBytes)
+            if (res is DataResult.Success) {
+                updateProfileAvatar(userId, res.data)
+            } else if (res is DataResult.Error) {
+                _actionResult.value = "Error al subir imagen: ${res.message}"
+            }
+        }
+    }
+
+    fun getAvatarUrl(userId: String, explicitUrl: String?): String {
+        return if (!explicitUrl.isNullOrBlank()) explicitUrl
+        else "https://robohash.org/$userId?set=set4"
     }
 }

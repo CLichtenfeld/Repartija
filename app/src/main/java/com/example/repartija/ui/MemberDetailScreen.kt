@@ -1,6 +1,7 @@
 package com.example.repartija.ui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -20,6 +21,8 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.res.painterResource
+import com.example.repartija.R
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.example.repartija.data.model.Profile
 import com.example.repartija.data.repository.MemberDetailState
@@ -48,123 +51,132 @@ fun MemberDetailScreen(
         }
     }
 
-    Scaffold(
-        containerColor = Color.Transparent,
-        topBar = {
-            TopAppBar(
-                title = { Text(member.displayName) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver")
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
-            )
-        }
-    ) { padding ->
-        if (state.isLoading && !isRefreshing) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
-            }
-        } else {
-            androidx.compose.material3.pulltorefresh.PullToRefreshBox(
-                isRefreshing = isRefreshing,
-                onRefresh = {
-                    isRefreshing = true
-                    viewModel.loadDetails(groupId, currentUserId, member.id)
-                },
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-            ) {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize().padding(16.dp)
-                ) {
-                    item {
-                        // Current Balance Header
-                        Text(
-                            text = "Balance Actual",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = Color.Gray
-                        )
-                        val balanceColor = if (state.currentBalance > 0.01) MaterialTheme.colorScheme.primary
-                        else if (state.currentBalance < -0.01) MaterialTheme.colorScheme.error
-                        else Color.Gray
-                        
-                        val balanceLabel = if (state.currentBalance > 0.01) "Te debe"
-                        else if (state.currentBalance < -0.01) "Le debés"
-                        else "Al día"
-
-                        Text(
-                            text = "$balanceLabel: $ ${String.format("%.2f", abs(state.currentBalance))}",
-                            style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.Bold),
-                            color = balanceColor
-                        )
-
-                        Spacer(modifier = Modifier.height(24.dp))
-
-                        // Chart Section
-                        Text(
-                            text = "Evolución últimos 30 días",
-                            style = MaterialTheme.typography.titleMedium
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        
-                        CanvasDebtChart(
-                            state = state,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(200.dp)
-                        )
-
-                        Spacer(modifier = Modifier.height(32.dp))
-
-                        // Transactions Section
-                        Text(
-                            text = "Historial con ${member.displayName}",
-                            style = MaterialTheme.typography.titleMedium
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                    }
-
-                    if (state.transactions.isEmpty()) {
-                        item {
-                            Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
-                                Text("No hay transacciones previas.", color = Color.Gray)
-                            }
+    Box(modifier = Modifier.fillMaxSize()) {
+        Image(
+            painter = painterResource(id = R.drawable.background),
+            contentDescription = null,
+            modifier = Modifier.fillMaxSize(),
+            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+            alpha = 0.15f
+        )
+        Scaffold(
+            containerColor = Color.Transparent,
+            topBar = {
+                TopAppBar(
+                    title = { Text(member.displayName) },
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver")
                         }
-                    } else {
-                        items(state.transactions) { tx ->
-                            Card(
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
+                )
+            }
+        ) { padding ->
+            if (state.isLoading && !isRefreshing) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+            } else {
+                androidx.compose.material3.pulltorefresh.PullToRefreshBox(
+                    isRefreshing = isRefreshing,
+                    onRefresh = {
+                        isRefreshing = true
+                        viewModel.loadDetails(groupId, currentUserId, member.id)
+                    },
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(padding)
+                ) {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize().padding(16.dp)
+                    ) {
+                        item {
+                            // Current Balance Header
+                            Text(
+                                text = "Balance Actual",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = Color.Gray
+                            )
+                            val balanceColor = if (state.currentBalance > 0.01) MaterialTheme.colorScheme.primary
+                            else if (state.currentBalance < -0.01) MaterialTheme.colorScheme.error
+                            else Color.Gray
+                            
+                            val balanceLabel = if (state.currentBalance > 0.01) "Te debe"
+                            else if (state.currentBalance < -0.01) "Le debés"
+                            else "Al día"
+
+                            Text(
+                                text = "$balanceLabel: $ ${String.format("%.2f", abs(state.currentBalance))}",
+                                style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.Bold),
+                                color = balanceColor
+                            )
+
+                            Spacer(modifier = Modifier.height(24.dp))
+
+                            // Chart Section
+                            Text(
+                                text = "Evolución últimos 30 días",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Spacer(modifier = Modifier.height(16.dp))
+                            
+                            CanvasDebtChart(
+                                state = state,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(vertical = 4.dp),
-                                shape = RoundedCornerShape(16.dp),
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f))
-                            ) {
-                                Row(
+                                    .height(200.dp)
+                            )
+
+                            Spacer(modifier = Modifier.height(32.dp))
+
+                            // Transactions Section
+                            Text(
+                                text = "Historial con ${member.displayName}",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                        }
+
+                        if (state.transactions.isEmpty()) {
+                            item {
+                                Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+                                    Text("No hay transacciones previas.", color = Color.Gray)
+                                }
+                            }
+                        } else {
+                            items(state.transactions) { tx ->
+                                Card(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(16.dp),
-                                    verticalAlignment = Alignment.CenterVertically
+                                        .padding(vertical = 4.dp),
+                                    shape = RoundedCornerShape(16.dp),
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f))
                                 ) {
-                                    val icon = if (tx.type == TransactionType.EXPENSE) Icons.Default.ReceiptLong else Icons.Default.CheckCircle
-                                    val color = if (tx.effectOnBalance > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(16.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        val icon = if (tx.type == TransactionType.EXPENSE) Icons.Default.ReceiptLong else Icons.Default.CheckCircle
+                                        val color = if (tx.effectOnBalance > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
 
-                                    Icon(icon, null, tint = color, modifier = Modifier.size(28.dp))
-                                    Spacer(Modifier.width(12.dp))
+                                        Icon(icon, null, tint = color, modifier = Modifier.size(28.dp))
+                                        Spacer(Modifier.width(12.dp))
 
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(text = tx.description, fontWeight = FontWeight.Bold)
-                                        Text(text = tx.date.take(10), style = MaterialTheme.typography.bodySmall)
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(text = tx.description, fontWeight = FontWeight.Bold)
+                                            Text(text = tx.date.take(10), style = MaterialTheme.typography.bodySmall)
+                                        }
+
+                                        Text(
+                                            text = "${if (tx.effectOnBalance > 0) "+" else "-"}$ ${String.format("%.2f", abs(tx.amount))}",
+                                            color = color,
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.Bold
+                                        )
                                     }
-
-                                    Text(
-                                        text = "${if (tx.effectOnBalance > 0) "+" else "-"}$ ${String.format("%.2f", abs(tx.amount))}",
-                                        color = color,
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.Bold
-                                    )
                                 }
                             }
                         }

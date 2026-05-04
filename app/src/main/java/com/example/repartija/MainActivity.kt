@@ -22,6 +22,11 @@ import com.example.repartija.ui.auth.LoginScreen
 import com.example.repartija.ui.auth.RegisterScreen
 import com.example.repartija.ui.theme.RepartijaTheme
 import com.example.repartija.util.UpdateManager
+import com.google.firebase.messaging.FirebaseMessaging
+import kotlinx.coroutines.launch
+import android.Manifest
+import android.os.Build
+import androidx.activity.result.contract.ActivityResultContracts
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 
@@ -37,9 +42,20 @@ class MainActivity : ComponentActivity() {
         
         enableEdgeToEdge()
         val updateManager = UpdateManager(applicationContext)
+
+        val requestPermissionLauncher = registerForActivityResult(
+            ActivityResultContracts.RequestPermission()
+        ) { isGranted ->
+            // Manejar si el usuario dio permiso o no
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            requestPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
         
         setContent {
             val viewModel: DebtViewModel = hiltViewModel()
+            val scope = rememberCoroutineScope()
 
             HandleIntent(viewModel)
             HandleUpdate(updateManager)
@@ -51,8 +67,20 @@ class MainActivity : ComponentActivity() {
                 LaunchedEffect(currentUserInfo) {
                     if (currentUserInfo == null) {
                         navController.navigate("login") { popUpTo(0) }
-                    } else if (navController.currentDestination?.route == "login") {
-                        navController.navigate("groups") { popUpTo("login") { inclusive = true } }
+                    } else {
+                        // Register FCM Token
+                        FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
+                            if (task.isSuccessful) {
+                                val token = task.result
+                                scope.launch {
+                                    sessionRepository.updateFcmToken(token)
+                                }
+                            }
+                        }
+
+                        if (navController.currentDestination?.route == "login") {
+                            navController.navigate("groups") { popUpTo("login") { inclusive = true } }
+                        }
                     }
                 }
 

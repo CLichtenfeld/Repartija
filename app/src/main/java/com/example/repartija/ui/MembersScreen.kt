@@ -19,11 +19,20 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.focus.onFocusChanged
+import coil.compose.AsyncImage
 import com.example.repartija.R
 import com.example.repartija.data.model.GroupInvite
 import com.example.repartija.data.model.Profile
 import com.example.repartija.data.repository.DataResult
 import kotlinx.coroutines.launch
+import java.io.InputStream
 
 @Composable
 fun MembersScreen(viewModel: DebtViewModel) {
@@ -37,6 +46,7 @@ fun MembersScreen(viewModel: DebtViewModel) {
     var showAddMemberDialog by remember { mutableStateOf(false) }
     var removingMember by remember { mutableStateOf<Profile?>(null) }
     var removeBlockedMessage by remember { mutableStateOf<String?>(null) }
+    var showChangeAvatarDialog by remember { mutableStateOf<Profile?>(null) }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         MembersHeader(
@@ -62,7 +72,8 @@ fun MembersScreen(viewModel: DebtViewModel) {
                 } else {
                     removeBlockedMessage = "No se puede quitar a ${member.displayName}: tiene saldos pendientes."
                 }
-            }
+            },
+            onChangeAvatar = { showChangeAvatarDialog = it }
         )
     }
 
@@ -78,8 +89,11 @@ fun MembersScreen(viewModel: DebtViewModel) {
     MembersDialogs(
         removingMember = removingMember,
         removeBlockedMessage = removeBlockedMessage,
+        showChangeAvatarDialog = showChangeAvatarDialog,
+        viewModel = viewModel,
         onDismissRemove = { removingMember = null },
         onDismissBlocked = { removeBlockedMessage = null },
+        onDismissAvatar = { showChangeAvatarDialog = null },
         onConfirmRemove = { member ->
             viewModel.removeMemberFromCurrentGroup(member.id)
             removingMember = null
@@ -114,7 +128,8 @@ private fun MembersListContent(
     invitesRes: DataResult<List<GroupInvite>>,
     currentUserId: String?,
     viewModel: DebtViewModel,
-    onRemoveClick: (Profile, Boolean) -> Unit
+    onRemoveClick: (Profile, Boolean) -> Unit,
+    onChangeAvatar: (Profile) -> Unit
 ) {
     val context = LocalContext.current
     when (membersRes) {
@@ -130,7 +145,7 @@ private fun MembersListContent(
                 items(members) { member ->
                     val isCurrentUser = member.id == currentUserId
                     val canRemove = !isCurrentUser && viewModel.memberHasZeroBalance(member.id)
-                    MemberListItem(member, isCurrentUser, canRemove, onRemoveClick)
+                    MemberListItem(member, isCurrentUser, canRemove, onRemoveClick, onChangeAvatar, viewModel)
                     HorizontalDivider()
                 }
 
@@ -156,7 +171,9 @@ private fun MemberListItem(
     member: Profile,
     isCurrentUser: Boolean,
     canRemove: Boolean,
-    onRemoveClick: (Profile, Boolean) -> Unit
+    onRemoveClick: (Profile, Boolean) -> Unit,
+    onChangeAvatar: (Profile) -> Unit,
+    viewModel: DebtViewModel
 ) {
     ListItem(
         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
@@ -171,14 +188,20 @@ private fun MemberListItem(
         },
         supportingContent = { Text(member.email, style = MaterialTheme.typography.bodySmall) },
         leadingContent = {
-            Image(
-                painter = painterResource(id = R.drawable.member_avatar),
+            val avatarUrl = viewModel.getAvatarUrl(member.id, member.avatarUrl)
+            AsyncImage(
+                model = avatarUrl,
                 contentDescription = null,
-                modifier = Modifier.size(48.dp).clip(CircleShape)
+                modifier = Modifier.size(48.dp).clip(CircleShape),
+                error = painterResource(id = R.drawable.member_avatar)
             )
         },
         trailingContent = {
-            if (!isCurrentUser) {
+            if (isCurrentUser) {
+                IconButton(onClick = { onChangeAvatar(member) }) {
+                    Icon(Icons.Default.Edit, contentDescription = "Cambiar Foto")
+                }
+            } else {
                 IconButton(onClick = { onRemoveClick(member, canRemove) }) {
                     Icon(
                         Icons.Default.PersonRemove,
@@ -222,8 +245,11 @@ private fun InviteListItem(
 private fun MembersDialogs(
     removingMember: Profile?,
     removeBlockedMessage: String?,
+    showChangeAvatarDialog: Profile?,
+    viewModel: DebtViewModel,
     onDismissRemove: () -> Unit,
     onDismissBlocked: () -> Unit,
+    onDismissAvatar: () -> Unit,
     onConfirmRemove: (Profile) -> Unit
 ) {
     removingMember?.let { member ->
@@ -252,6 +278,80 @@ private fun MembersDialogs(
             text = { Text(msg) },
             confirmButton = {
                 Button(onClick = onDismissBlocked) { Text("Entendido") }
+            }
+        )
+    }
+
+    showChangeAvatarDialog?.let { profile ->
+        var newAvatarUrlValue by remember { mutableStateOf(TextFieldValue(profile.avatarUrl ?: "")) }
+        val newAvatarUrl = newAvatarUrlValue.text
+        val context = LocalContext.current
+        
+        val photoPickerLauncher = rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.PickVisualMedia(),
+            onResult = { uri ->
+                uri?.let {
+                    val bytes = context.contentResolver.openInputStream(it)?.use { input ->
+                        input.readBytes()
+                    }
+                    if (bytes != null) {
+                        viewModel.uploadAvatar(profile.id, bytes)
+                        onDismissAvatar()
+                    }
+                }
+            }
+        )
+
+        AlertDialog(
+            onDismissRequest = onDismissAvatar,
+            title = { Text("Cambiar Foto de Perfil") },
+            text = {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    val currentPreview = viewModel.getAvatarUrl(profile.id, newAvatarUrl.ifBlank { null })
+                    AsyncImage(
+                        model = currentPreview,
+                        contentDescription = null,
+                        modifier = Modifier.size(80.dp).clip(CircleShape),
+                        error = painterResource(id = R.drawable.member_avatar)
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    
+                    Button(
+                        onClick = { 
+                            photoPickerLauncher.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                            )
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.PhotoLibrary, null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Elegir de la Galería")
+                    }
+                    
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text("O ingresá una URL:", style = MaterialTheme.typography.labelSmall)
+                    
+                    OutlinedTextField(
+                        value = newAvatarUrlValue,
+                        onValueChange = { newAvatarUrlValue = it },
+                        label = { Text("URL de la imagen") },
+                        modifier = Modifier.fillMaxWidth().onFocusChanged {
+                            if (it.isFocused) {
+                                newAvatarUrlValue = newAvatarUrlValue.copy(selection = TextRange(0, newAvatarUrlValue.text.length))
+                            }
+                        }
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    viewModel.updateProfileAvatar(profile.id, newAvatarUrl)
+                    onDismissAvatar()
+                }) { Text("Guardar URL") }
+            },
+            dismissButton = {
+                TextButton(onClick = onDismissAvatar) { Text("Cancelar") }
             }
         )
     }

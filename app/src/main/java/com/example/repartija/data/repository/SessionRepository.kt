@@ -4,6 +4,7 @@ import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.auth.status.SessionStatus
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.providers.builtin.Email
+import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.auth.user.UserInfo
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -52,5 +53,18 @@ class SessionRepository @Inject constructor(
 
     suspend fun logout() {
         supabaseClient.auth.signOut()
+    }
+
+    suspend fun updateFcmToken(token: String) {
+        val userId = currentUser.value?.id ?: return
+        supabaseClient.postgrest.from("profiles").update(
+            buildJsonObject {
+                put("fcm_token", token)
+            }
+        ) {
+            filter {
+                eq("id", userId)
+            }
+        }
     }
 }

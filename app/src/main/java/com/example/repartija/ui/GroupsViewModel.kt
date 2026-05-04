@@ -17,7 +17,8 @@ class GroupsViewModel @Inject constructor(
     private val expenseRepository: ExpenseRepository,
     private val expenseSplitRepository: ExpenseSplitRepository,
     private val paymentRepository: PaymentRepository,
-    private val balanceRepository: BalanceRepository
+    private val balanceRepository: BalanceRepository,
+    private val expensePayerRepository: ExpensePayerRepository
 ) : ViewModel() {
 
     val allGroups: StateFlow<DataResult<List<Group>>> = groupRepository.groups
@@ -69,7 +70,13 @@ class GroupsViewModel @Inject constructor(
         val payRes = paymentRepository.fetchPayments(groupId)
         if (payRes !is DataResult.Success) return false
 
-        val debts = balanceRepository.calculateSimplifiedDebts(expRes.data, allSplits, payRes.data)
+        val allPayers = mutableListOf<ExpensePayer>()
+        for (exp in expRes.data) {
+            val pr = expensePayerRepository.fetchPayersForExpense(exp.id)
+            if (pr is DataResult.Success<*>) allPayers.addAll(pr.data as List<ExpensePayer>)
+        }
+
+        val debts = balanceRepository.calculateSimplifiedDebts(expRes.data, allSplits, payRes.data, allPayers)
         return debts.isEmpty()
     }
 }

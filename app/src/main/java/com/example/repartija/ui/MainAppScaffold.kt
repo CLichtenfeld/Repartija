@@ -11,6 +11,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
@@ -29,6 +30,7 @@ fun MainAppScaffold(
     onBack: () -> Unit,
     onMemberClick: (String) -> Unit
 ) {
+    val scope = rememberCoroutineScope()
     var currentTab by remember { mutableIntStateOf(0) }
     var showExpenseDialog by remember { mutableStateOf(false) }
 
@@ -39,51 +41,67 @@ fun MainAppScaffold(
     val members = (membersRes as? DataResult.Success)?.data ?: emptyList()
     val selectedGroup = (selectedGroupRes as? DataResult.Success)?.data
 
-    Scaffold(
-        containerColor = Color.Transparent,
-        topBar = {
-            MainTopBar(
-                title = selectedGroup?.name?.uppercase() ?: "REPARTIJA",
-                isSyncing = isSyncing,
-                onBack = onBack
-            )
-        },
-        bottomBar = {
-            MainNavigationBar(
-                currentTab = currentTab,
-                onTabSelect = { currentTab = it }
-            )
-        },
-        floatingActionButton = {
-            if (currentTab == 0) {
-                FloatingActionButton(
-                    onClick = { showExpenseDialog = true },
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = Color.White,
-                    shape = CircleShape
-                ) {
-                    Icon(Icons.Default.Add, contentDescription = "Nuevo Gasto")
-                }
-            }
-        }
-    ) { innerPadding ->
-        Box(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
-            when (currentTab) {
-                0 -> BalancesScreen(viewModel, onMemberClick = onMemberClick)
-                1 -> HistoryScreen(viewModel)
-                2 -> MembersScreen(viewModel)
-            }
-        }
+    val snackbarHostState = remember { SnackbarHostState() }
 
-        if (showExpenseDialog) {
-            ExpenseDialog(
-                members = members,
-                onDismiss = { showExpenseDialog = false },
-                onConfirm = { desc, amount, paidBy, shares ->
-                    viewModel.addNewExpense(desc, amount, paidBy, shares)
-                    showExpenseDialog = false
+    Box(modifier = Modifier.fillMaxSize()) {
+        Image(
+            painter = painterResource(id = R.drawable.background),
+            contentDescription = null,
+            modifier = Modifier.fillMaxSize(),
+            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+            alpha = 0.15f
+        )
+        Scaffold(
+            containerColor = Color.Transparent,
+            snackbarHost = { SnackbarHost(snackbarHostState) },
+            topBar = {
+                MainTopBar(
+                    title = selectedGroup?.name?.uppercase() ?: "REPARTIJA",
+                    isSyncing = isSyncing,
+                    onBack = onBack
+                )
+            },
+            bottomBar = {
+                MainNavigationBar(
+                    currentTab = currentTab,
+                    onTabSelect = { currentTab = it }
+                )
+            },
+            floatingActionButton = {
+                if (currentTab == 0) {
+                    FloatingActionButton(
+                        onClick = { showExpenseDialog = true },
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = Color.White,
+                        shape = CircleShape
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = "Nuevo Gasto")
+                    }
                 }
-            )
+            }
+        ) { innerPadding ->
+            Box(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
+                when (currentTab) {
+                    0 -> BalancesScreen(
+                        viewModel = viewModel, 
+                        onMemberClick = onMemberClick,
+                        onShowSnackbar = { msg -> scope.launch { snackbarHostState.showSnackbar(msg) } }
+                    )
+                    1 -> HistoryScreen(viewModel)
+                    2 -> MembersScreen(viewModel)
+                }
+            }
+
+            if (showExpenseDialog) {
+                ExpenseDialog(
+                    members = members,
+                    onDismiss = { showExpenseDialog = false },
+                    onConfirm = { desc, amount, mainPayer, splits, type, payers ->
+                        viewModel.addNewExpense(desc, amount, mainPayer, splits, type, payers)
+                        showExpenseDialog = false
+                    }
+                )
+            }
         }
     }
 }
@@ -179,7 +197,7 @@ private fun NavIcon(resId: Int, contentDescription: String, isSelected: Boolean)
     Image(
         painter = painterResource(id = resId),
         contentDescription = contentDescription,
-        modifier = Modifier.size(28.dp),
-        alpha = if (isSelected) 1f else 0.5f
+        modifier = Modifier.size(42.dp), // Aumentamos el tamaño considerablemente
+        alpha = if (isSelected) 1f else 0.7f
     )
 }

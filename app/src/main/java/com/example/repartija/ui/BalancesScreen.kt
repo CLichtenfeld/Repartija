@@ -7,6 +7,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Payment
 import androidx.compose.material3.*
@@ -17,14 +18,22 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.focus.onFocusChanged
 import com.example.repartija.R
 import com.example.repartija.data.model.Profile
 import com.example.repartija.data.repository.DataResult
 import kotlin.math.abs
 
 @Composable
-fun BalancesScreen(viewModel: DebtViewModel, onMemberClick: (String) -> Unit) {
+fun BalancesScreen(
+    viewModel: DebtViewModel,
+    onMemberClick: (String) -> Unit,
+    onShowSnackbar: (String) -> Unit
+) {
     val debts by viewModel.currentDebts.collectAsState()
     val membersRes by viewModel.currentMembers.collectAsState()
     val currentUserId by viewModel.currentUserId.collectAsState()
@@ -68,10 +77,11 @@ fun BalancesScreen(viewModel: DebtViewModel, onMemberClick: (String) -> Unit) {
         val targetMember = memberMap[paymentToUserId]
         PaymentConfirmationDialog(
             memberName = targetMember?.displayName ?: "Miembro",
-            amount = paymentAmount,
+            totalDebt = paymentAmount,
             onDismiss = { paymentToUserId = null },
-            onConfirm = {
-                viewModel.makePayment(paymentToUserId!!, paymentAmount)
+            onConfirm = { amount ->
+                viewModel.makePayment(paymentToUserId!!, amount)
+                onShowSnackbar("Pago de $ ${String.format("%.2f", amount)} registrado")
                 paymentToUserId = null
             }
         )
@@ -138,16 +148,56 @@ private fun BalanceCard(
 @Composable
 private fun PaymentConfirmationDialog(
     memberName: String,
-    amount: Double,
+    totalDebt: Double,
     onDismiss: () -> Unit,
-    onConfirm: () -> Unit
+    onConfirm: (Double) -> Unit
 ) {
+    var amountValue by remember { mutableStateOf(TextFieldValue(
+        text = String.format(java.util.Locale.US, "%.2f", totalDebt)
+    )) }
+    val amountStr = amountValue.text
+    val amount = amountStr.replace(",", ".").toDoubleOrNull() ?: 0.0
+    val isValid = amount > 0 && amount <= (totalDebt + 0.01)
+
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Registrar Pago") },
-        text = { Text("¿Saldar deuda de $ ${String.format("%.2f", amount)} con $memberName?") },
+        title = { Text("Registrar pago a $memberName") },
+        text = {
+            Column {
+                Text(
+                    "Deuda total: $ ${String.format("%.2f", totalDebt)}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                OutlinedTextField(
+                    value = amountValue,
+                    onValueChange = { amountValue = it },
+                    label = { Text("Monto a pagar") },
+                    suffix = { Text("$") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    isError = !isValid && amountStr.isNotEmpty(),
+                    modifier = Modifier.fillMaxWidth().onFocusChanged { 
+                        if (it.isFocused) {
+                            amountValue = amountValue.copy(selection = TextRange(0, amountValue.text.length))
+                        }
+                    }
+                )
+                if (!isValid && amountStr.isNotEmpty()) {
+                    Text(
+                        text = if (amount <= 0) "El monto debe ser mayor a 0" else "No puede superar la deuda total",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.padding(start = 16.dp, top = 4.dp)
+                    )
+                }
+            }
+        },
         confirmButton = {
-            Button(onClick = onConfirm) { Text("Confirmar Pago") }
+            Button(
+                onClick = { onConfirm(amount) },
+                enabled = isValid
+            ) { Text("Confirmar pago") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancelar") }

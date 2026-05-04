@@ -18,8 +18,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.example.repartija.R
 import com.example.repartija.data.model.Group
@@ -40,61 +43,70 @@ fun GroupsScreen(
     var deleteBlockedMessage by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
-    Scaffold(
-        containerColor = Color.Transparent,
-        topBar = { GroupsTopBar() },
-        floatingActionButton = {
-            FloatingActionButton(
-                onClick = { showAddGroupDialog = true },
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = Color.White,
-                shape = CircleShape
-            ) {
-                Icon(Icons.Default.Add, contentDescription = "Nuevo Grupo")
+    Box(modifier = Modifier.fillMaxSize()) {
+        Image(
+            painter = painterResource(id = R.drawable.background),
+            contentDescription = null,
+            modifier = Modifier.fillMaxSize(),
+            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+            alpha = 0.15f
+        )
+        Scaffold(
+            containerColor = Color.Transparent,
+            topBar = { GroupsTopBar() },
+            floatingActionButton = {
+                FloatingActionButton(
+                    onClick = { showAddGroupDialog = true },
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = Color.White,
+                    shape = CircleShape
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = "Nuevo Grupo")
+                }
             }
-        }
-    ) { padding ->
-        Box(modifier = Modifier.padding(padding).fillMaxSize().padding(16.dp)) {
-            GroupsContent(
-                groupsRes = groupsRes,
-                viewModel = viewModel,
-                onGroupClick = onGroupClick,
-                onEdit = { editingGroup = it },
-                onDelete = { group ->
-                    scope.launch {
-                        val canDelete = viewModel.areAllBalancesZero(group.id)
-                        if (canDelete) {
-                            deletingGroup = group
-                        } else {
-                            deleteBlockedMessage = "No se puede eliminar \"${group.name}\": hay saldos pendientes."
+        ) { padding ->
+            Box(modifier = Modifier.padding(padding).fillMaxSize().padding(16.dp)) {
+                GroupsContent(
+                    groupsRes = groupsRes,
+                    viewModel = viewModel,
+                    onGroupClick = onGroupClick,
+                    onEdit = { editingGroup = it },
+                    onDelete = { group ->
+                        scope.launch {
+                            val canDelete = viewModel.areAllBalancesZero(group.id)
+                            if (canDelete) {
+                                deletingGroup = group
+                            } else {
+                                deleteBlockedMessage = "No se puede eliminar \"${group.name}\": hay saldos pendientes."
+                            }
                         }
                     }
+                )
+            }
+
+            GroupsDialogs(
+                showAddGroupDialog = showAddGroupDialog,
+                editingGroup = editingGroup,
+                deletingGroup = deletingGroup,
+                deleteBlockedMessage = deleteBlockedMessage,
+                onDismissAdd = { showAddGroupDialog = false },
+                onDismissEdit = { editingGroup = null },
+                onDismissDelete = { deletingGroup = null },
+                onDismissBlocked = { deleteBlockedMessage = null },
+                onConfirmAdd = { name ->
+                    viewModel.addGroup(name)
+                    showAddGroupDialog = false
+                },
+                onConfirmEdit = { id, name ->
+                    viewModel.renameGroup(id, name)
+                    editingGroup = null
+                },
+                onConfirmDelete = { id ->
+                    viewModel.deleteGroup(id)
+                    deletingGroup = null
                 }
             )
         }
-
-        GroupsDialogs(
-            showAddGroupDialog = showAddGroupDialog,
-            editingGroup = editingGroup,
-            deletingGroup = deletingGroup,
-            deleteBlockedMessage = deleteBlockedMessage,
-            onDismissAdd = { showAddGroupDialog = false },
-            onDismissEdit = { editingGroup = null },
-            onDismissDelete = { deletingGroup = null },
-            onDismissBlocked = { deleteBlockedMessage = null },
-            onConfirmAdd = { name ->
-                viewModel.addGroup(name)
-                showAddGroupDialog = false
-            },
-            onConfirmEdit = { id, name ->
-                viewModel.renameGroup(id, name)
-                editingGroup = null
-            },
-            onConfirmDelete = { id ->
-                viewModel.deleteGroup(id)
-                deletingGroup = null
-            }
-        )
     }
 }
 
@@ -235,16 +247,21 @@ private fun GroupsDialogs(
     onConfirmDelete: (String) -> Unit
 ) {
     if (showAddGroupDialog) {
-        var groupName by remember { mutableStateOf("") }
+        var groupNameValue by remember { mutableStateOf(TextFieldValue("")) }
+        val groupName = groupNameValue.text
         AlertDialog(
             onDismissRequest = onDismissAdd,
             title = { Text("Nuevo Grupo") },
             text = {
                 OutlinedTextField(
-                    value = groupName,
-                    onValueChange = { groupName = it },
+                    value = groupNameValue,
+                    onValueChange = { groupNameValue = it },
                     label = { Text("Nombre del grupo") },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth().onFocusChanged {
+                        if (it.isFocused) {
+                            groupNameValue = groupNameValue.copy(selection = TextRange(0, groupNameValue.text.length))
+                        }
+                    }
                 )
             },
             confirmButton = {
@@ -254,16 +271,21 @@ private fun GroupsDialogs(
     }
 
     editingGroup?.let { group ->
-        var newName by remember(group.id) { mutableStateOf(group.name) }
+        var newNameValue by remember(group.id) { mutableStateOf(TextFieldValue(group.name)) }
+        val newName = newNameValue.text
         AlertDialog(
             onDismissRequest = onDismissEdit,
             title = { Text("Renombrar Grupo") },
             text = {
                 OutlinedTextField(
-                    value = newName,
-                    onValueChange = { newName = it },
+                    value = newNameValue,
+                    onValueChange = { newNameValue = it },
                     label = { Text("Nuevo nombre") },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth().onFocusChanged {
+                        if (it.isFocused) {
+                            newNameValue = newNameValue.copy(selection = TextRange(0, newNameValue.text.length))
+                        }
+                    }
                 )
             },
             confirmButton = {

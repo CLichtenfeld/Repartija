@@ -12,6 +12,7 @@ object AppConstants {
         const val GROUP_INVITES = "group_invites"
         const val EXPENSES = "expenses"
         const val EXPENSE_SPLITS = "expense_splits"
+        const val EXPENSE_PAYERS = "expense_payers"
         const val PAYMENTS = "payments"
     }
 }
